@@ -1,0 +1,588 @@
+"""Build a small HTML report linking priority resources to translation UIs."""
+
+from __future__ import annotations
+
+import configparser
+import html
+import importlib
+import re
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Iterable, Sequence
+from urllib.parse import quote, urlencode
+
+import polib
+from potodo.po_file import PoDirectories, PoDirectory
+
+from .document_score import score_sphinx_documents
+from .priority import (
+    PROJECTS,
+    Project,
+    build_priority_rows,
+    calculate_document_scores,
+    load_page_visitors,
+    normalize_language,
+    normalized_ranks,
+    packaging_document_urls,
+    resolve_source_root,
+    resolve_translation_paths,
+)
+
+if TYPE_CHECKING:
+    from polib import POEntry
+
+ADORNMENT_RE = re.compile(r"^(?P<char>[^\w\s])(?P=char){2,}$")
+
+
+@dataclass(frozen=True)
+class HtmlMetrics:
+    """Raw and combined metrics displayed for an HTML resource."""
+
+    priority: float
+    completion: float | None = None
+    original_visitors: int | None = None
+    translated_visitors: int | None = None
+    document_score: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True)
+class HtmlItem:
+    """One linked resource in the HTML report."""
+
+    resource: str
+    title: str
+    url: str
+    metrics: HtmlMetrics
+
+
+@dataclass(frozen=True)
+class HtmlSection:
+    """A project heading and its highest-priority resources."""
+
+    project: str
+    title: str
+    items: tuple[HtmlItem, ...]
+
+
+@dataclass(frozen=True)
+class _PackagingCandidate:
+    document: PurePosixPath
+    title: str
+    entry: POEntry
+    completion: float
+    original_visitors: int
+    translated_visitors: int | None
+    document_score: tuple[int, ...]
+
+
+def rst_title(path: Path) -> str:
+    """Return the first reStructuredText section title in a source file."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for title, underline in zip(lines, lines[1:]):
+        title = title.strip()
+        underline = underline.strip()
+        if title and ADORNMENT_RE.fullmatch(underline) and len(underline) >= len(title):
+            return title
+    return path.stem
+
+
+def translated_title(po_path: Path, source_title: str) -> str:
+    """Use the translated document heading when the catalog contains one."""
+    entries = polib.pofile(str(po_path))
+    for entry in entries:
+        if entry.msgid.casefold() == source_title.casefold():
+            return entry.msgstr if entry.translated() else entry.msgid
+    return source_title
+
+
+def transifex_resources(translations_root: Path) -> dict[str, str]:
+    """Read exact PO-to-resource mappings from a Transifex configuration."""
+    config_path = translations_root / ".tx" / "config"
+    if not config_path.is_file():
+        config_path = translations_root / "locales" / ".tx" / "config"
+    if not config_path.is_file():
+        return {}
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(config_path, encoding="utf-8")
+    resources = {}
+    for section in parser.sections():
+        if not parser.has_option(section, "file_filter"):
+            continue
+        resource = parser.get(
+            section, "resource_name", fallback=section.rpartition(":r:")[2]
+        )
+        resources[parser.get(section, "file_filter")] = resource
+    return resources
+
+
+def transifex_url(project: str, language: str, resource: str) -> str:
+    """Return a Transifex resource translation URL."""
+    organization, tx_project = {
+        "cpython": ("python-doc", "python-newest"),
+        "sphinx": ("sphinx-doc", "sphinx-doc"),
+    }[project]
+    return (
+        f"https://app.transifex.com/{organization}/{tx_project}/translate/"
+        f"#{quote(language, safe='_')}/{quote(resource, safe='-_')}"
+    )
+
+
+def weblate_checksum(source: str, context: str = "") -> str:
+    """Return the checksum Weblate uses to address a bilingual PO unit."""
+    try:
+        siphash = importlib.import_module("siphashc").siphash
+    except ImportError as error:
+        raise RuntimeError(
+            "Packaging HTML links require potodo-docs-priority[html]"
+        ) from error
+    return format(siphash("Weblate Sip Hash", source + context), "016x")
+
+
+def weblate_url(language: str, entry: POEntry) -> str:
+    """Return a Weblate URL focused on one unit."""
+    parameters = {}
+    if not entry.translated():
+        parameters["q"] = "state:<translated"
+    parameters["checksum"] = weblate_checksum(entry.msgid, entry.msgctxt or "")
+    query = urlencode(parameters)
+    return (
+        "https://hosted.weblate.org/translate/pypa/packaging-python-org/"
+        f"{quote(language, safe='-_')}/?{query}"
+    )
+
+
+def _load_visitors(
+    project: Project,
+    stats: Path | None,
+    language: str,
+    snapshots: int,
+    docs_version: str,
+) -> tuple[dict[str, int] | None, dict[str, int] | None]:
+    if project.stats_site is None:
+        return None, None
+    if stats is None:
+        raise ValueError(f"Plausible stats are required for {project.name}")
+    original_prefix = (
+        docs_version if project.name == "cpython" else project.original_stats_prefix
+    )
+    assert original_prefix is not None
+    original = load_page_visitors(stats, project.stats_site, original_prefix, snapshots)
+    try:
+        translated = load_page_visitors(
+            stats, project.stats_site, normalize_language(language), snapshots
+        )
+    except FileNotFoundError:
+        translated = None
+    return original, translated
+
+
+def _visitor_count(visitors: dict[str, int] | None, urls: Iterable[str]) -> int | None:
+    if visitors is None:
+        return None
+    return sum(visitors.get(url, 0) for url in urls)
+
+
+def _scan_paths(paths: Sequence[Path]) -> PoDirectories:
+    directories = PoDirectories()
+    for path in paths:
+        directory = PoDirectory(path, use_cache=False)
+        directory.scan()
+        directories.append(directory)
+    return directories
+
+
+def _standard_items(
+    project_name: str,
+    source: Path,
+    translations: Path,
+    language: str,
+    stats: Path | None,
+    snapshots: int,
+    docs_version: str,
+    limit: int,
+) -> tuple[HtmlItem, ...]:
+    project = PROJECTS[project_name]
+    paths = resolve_translation_paths(project, [translations], language)
+    directories = _scan_paths(paths)
+    scores = calculate_document_scores(project, source)
+    original, translated = _load_visitors(
+        project, stats, language, snapshots, docs_version
+    )
+    rows = build_priority_rows(
+        directories,
+        scores,
+        original,
+        translated,
+        project=project,
+        language=language,
+        docs_version=docs_version,
+        show_finished=False,
+    )[:limit]
+    source_root = resolve_source_root(project, source)
+    tx_resources = transifex_resources(translations)
+    items = []
+    for row in rows:
+        resource = row.resource.removesuffix(".po")
+        catalog = scores[PurePosixPath(row.resource).with_suffix(".pot")]
+        if catalog.documents and (source_root / catalog.documents[0]).is_file():
+            title = translated_title(
+                Path(row.path), rst_title(source_root / catalog.documents[0])
+            )
+        elif resource == "sphinx":
+            title = "Documentation templates"
+        else:
+            title = resource
+        tx_resource = tx_resources.get(row.resource, resource.replace("/", "--"))
+        items.append(
+            HtmlItem(
+                resource=resource,
+                title=title,
+                url=transifex_url(project_name, language, tx_resource),
+                metrics=HtmlMetrics(
+                    priority=row.priority,
+                    completion=row.completion,
+                    original_visitors=row.original_visitors,
+                    translated_visitors=row.translated_visitors,
+                    document_score=row.document_score,
+                ),
+            )
+        )
+    return tuple(items)
+
+
+def _occurrence_document(path: str) -> PurePosixPath | None:
+    parts = PurePosixPath(path).parts
+    try:
+        source_index = parts.index("source")
+    except ValueError:
+        return None
+    document = PurePosixPath(*parts[source_index + 1 :])
+    return document if document.suffix == ".rst" else None
+
+
+def _packaging_entries(
+    po_path: Path,
+) -> dict[PurePosixPath, list[POEntry]]:
+    result: defaultdict[PurePosixPath, list[POEntry]] = defaultdict(list)
+    for entry in polib.pofile(str(po_path)):
+        if entry.obsolete or not entry.msgid:
+            continue
+        documents = {
+            document
+            for occurrence, _ in entry.occurrences
+            if (document := _occurrence_document(occurrence)) is not None
+        }
+        for document in documents:
+            result[document].append(entry)
+    return dict(result)
+
+
+def _packaging_candidates(
+    source: Path,
+    translations: Path,
+    language: str,
+    stats: Path,
+    snapshots: int,
+) -> list[_PackagingCandidate]:
+    project = PROJECTS["packaging"]
+    source_root = resolve_source_root(project, source)
+    po_path = (
+        resolve_translation_paths(project, [translations], language)[0] / "messages.po"
+    )
+    if not po_path.is_file():
+        raise FileNotFoundError(
+            f"Packaging translation catalog not found: {po_path}; "
+            "check out the translation/source branch"
+        )
+    entries_by_document = _packaging_entries(po_path)
+    document_scores = score_sphinx_documents(source_root)
+    original, translated = _load_visitors(project, stats, language, snapshots, "3")
+    candidates = []
+    for source_path, score in document_scores.items():
+        document = PurePosixPath(source_path.relative_to(source_root).as_posix())
+        entries = entries_by_document.get(document, [])
+        if not entries:
+            continue
+        words = sum(len(entry.msgid.split()) for entry in entries)
+        translated_words = sum(
+            len(entry.msgid.split()) for entry in entries if entry.translated()
+        )
+        completion = 100 * translated_words / words if words else 0
+        if completion == 100:
+            continue
+        title = rst_title(source_path)
+        title_entry = next(
+            (entry for entry in entries if entry.msgid.casefold() == title.casefold()),
+            None,
+        )
+        link_entry = title_entry or next(
+            entry for entry in entries if not entry.translated()
+        )
+        candidates.append(
+            _PackagingCandidate(
+                document=document,
+                title=(
+                    title_entry.msgstr
+                    if title_entry is not None and title_entry.translated()
+                    else title
+                ),
+                entry=link_entry,
+                completion=completion,
+                original_visitors=_visitor_count(
+                    original, packaging_document_urls(document, "en")
+                )
+                or 0,
+                translated_visitors=_visitor_count(
+                    translated,
+                    packaging_document_urls(document, normalize_language(language)),
+                ),
+                document_score=score,
+            )
+        )
+    return candidates
+
+
+def _packaging_items(
+    source: Path,
+    translations: Path,
+    language: str,
+    stats: Path,
+    snapshots: int,
+    limit: int,
+) -> tuple[HtmlItem, ...]:
+    candidates = _packaging_candidates(source, translations, language, stats, snapshots)
+    if not candidates:
+        return ()
+    project = PROJECTS["packaging"]
+    metrics: list[tuple[Sequence[float | int | tuple[int, ...]], float, bool]] = [
+        (
+            [candidate.completion for candidate in candidates],
+            project.weights.completion,
+            True,
+        ),
+        (
+            [candidate.document_score for candidate in candidates],
+            project.weights.navigation,
+            False,
+        ),
+        (
+            [candidate.original_visitors for candidate in candidates],
+            project.weights.original_popularity,
+            True,
+        ),
+    ]
+    if candidates[0].translated_visitors is not None:
+        metrics.append(
+            (
+                [candidate.translated_visitors or 0 for candidate in candidates],
+                project.weights.translated_popularity,
+                True,
+            )
+        )
+    weighted_ranks = [
+        (normalized_ranks(values, higher_is_better=higher), weight)
+        for values, weight, higher in metrics
+    ]
+    ranked = []
+    for index, candidate in enumerate(candidates):
+        priority = (
+            100
+            * sum(ranks[index] * weight for ranks, weight in weighted_ranks)
+            / sum(weight for _, weight in weighted_ranks)
+        )
+        ranked.append((priority, candidate))
+    ranked.sort(key=lambda item: (-item[0], item[1].document.as_posix()))
+    items = []
+    for priority, candidate in ranked[:limit]:
+        resource = candidate.document.as_posix().removesuffix(".rst")
+        items.append(
+            HtmlItem(
+                resource=resource,
+                title=candidate.title,
+                url=weblate_url(language, candidate.entry),
+                metrics=HtmlMetrics(
+                    priority=priority,
+                    completion=candidate.completion,
+                    original_visitors=candidate.original_visitors,
+                    translated_visitors=candidate.translated_visitors,
+                    document_score=candidate.document_score,
+                ),
+            )
+        )
+    return tuple(items)
+
+
+def build_sections(
+    *,
+    projects: Sequence[str],
+    language: str,
+    sphinx_language: str,
+    plausible_stats: Path,
+    cpython_source: Path,
+    cpython_translations: Path,
+    packaging_source: Path,
+    packaging_translations: Path,
+    sphinx_source: Path,
+    sphinx_translations: Path,
+    snapshots: int,
+    docs_version: str,
+    limit: int,
+) -> tuple[HtmlSection, ...]:
+    """Rank requested projects and return renderable report sections."""
+    sections = []
+    if "cpython" in projects:
+        sections.append(
+            HtmlSection(
+                project="cpython",
+                title="CPython Docs translation",
+                items=_standard_items(
+                    "cpython",
+                    cpython_source,
+                    cpython_translations,
+                    language,
+                    plausible_stats,
+                    snapshots,
+                    docs_version,
+                    limit,
+                ),
+            )
+        )
+    if "packaging" in projects:
+        sections.append(
+            HtmlSection(
+                project="packaging",
+                title="Packaging guide translation",
+                items=_packaging_items(
+                    packaging_source,
+                    packaging_translations,
+                    language,
+                    plausible_stats,
+                    snapshots,
+                    limit,
+                ),
+            )
+        )
+    if "sphinx" in projects:
+        sections.append(
+            HtmlSection(
+                project="sphinx",
+                title="Sphinx docs translations",
+                items=_standard_items(
+                    "sphinx",
+                    sphinx_source,
+                    sphinx_translations,
+                    sphinx_language,
+                    None,
+                    snapshots,
+                    docs_version,
+                    limit,
+                ),
+            )
+        )
+    return tuple(sections)
+
+
+def project_filename(project: str) -> str:
+    """Return the output filename for a project report."""
+    return "index.html" if project == "cpython" else f"{project}.html"
+
+
+def render_html(
+    section: HtmlSection,
+    site_title: str,
+    sections: Sequence[HtmlSection] = (),
+) -> str:
+    """Render one project's complete, dependency-free HTML page."""
+    page_title = f"{section.title} – {site_title}"
+    navigation = (
+        " | ".join(
+            f'<a href="{html.escape(project_filename(item.project), quote=True)}">'
+            f"{html.escape(item.title)}</a>"
+            for item in sections
+        )
+        if len(sections) > 1
+        else ""
+    )
+    lines = [
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        f"  <title>{html.escape(page_title)}</title>",
+        "  <style>body { font-family: sans-serif; } progress { width: 8rem; "
+        "vertical-align: middle; } .metric-hint { cursor: help; }</style>",
+        "</head>",
+        "<body>",
+        f"  <h1>{html.escape(section.title)}</h1>",
+    ]
+    if navigation:
+        lines.append(f"  <nav>{navigation}</nav>")
+    lines.append("  <ul>")
+    for item in section.items:
+        hint = metric_hint(item)
+        escaped_hint = html.escape(hint, quote=True)
+        progress = progress_html(item)
+        lines.append(
+            f'    <li><a href="{html.escape(item.url, quote=True)}">'
+            f"{html.escape(item.resource)}</a> – {html.escape(item.title)} "
+            f"{progress} "
+            f'<span class="metric-hint" title="{escaped_hint}" '
+            f'aria-label="{escaped_hint}" tabindex="0">ⓘ</span></li>'
+        )
+    lines.append("  </ul>")
+    lines.extend(("</body>", "</html>", ""))
+    return "\n".join(lines)
+
+
+def render_index(sections: Sequence[HtmlSection], title: str) -> str:
+    """Render an index linking the generated project pages."""
+    lines = [
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        f"  <title>{html.escape(title)}</title>",
+        "  <style>body { font-family: sans-serif; }</style>",
+        "</head>",
+        "<body>",
+        f"  <h1>{html.escape(title)}</h1>",
+        "  <ul>",
+    ]
+    for section in sections:
+        lines.append(
+            f'    <li><a href="{html.escape(project_filename(section.project), quote=True)}">'
+            f"{html.escape(section.title)}</a></li>"
+        )
+    lines.extend(("  </ul>", "</body>", "</html>", ""))
+    return "\n".join(lines)
+
+
+def metric_hint(item: HtmlItem) -> str:
+    """Format available priority metrics for a compact HTML tooltip."""
+    item_metrics = item.metrics
+    metrics = [f"Priority: {item_metrics.priority:.2f}"]
+    if item_metrics.completion is not None:
+        metrics.append(f"completion: {item_metrics.completion:.2f}%")
+    if item_metrics.original_visitors is not None:
+        metrics.append(f"original visitors: {item_metrics.original_visitors:,}")
+    if item_metrics.translated_visitors is not None:
+        metrics.append(f"translated visitors: {item_metrics.translated_visitors:,}")
+    if item_metrics.document_score is not None:
+        distance = ".".join(map(str, item_metrics.document_score))
+        metrics.append(f"distance: {distance}")
+    return "; ".join(metrics)
+
+
+def progress_html(item: HtmlItem) -> str:
+    """Render visible, accessible translation completion progress."""
+    completion = item.metrics.completion
+    if completion is None:
+        return ""
+    percentage = f"{completion:.2f}%"
+    label = html.escape(f"Translation progress: {percentage}", quote=True)
+    return (
+        f'<progress value="{completion:.2f}" max="100" '
+        f'aria-label="{label}">{percentage}</progress> '
+        f'<span class="progress-label">{percentage}</span>'
+    )
