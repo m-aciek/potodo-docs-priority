@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from potodo.po_file import PoDirectories, PoDirectory, PoFileStats
 
 UrlBuilder = Callable[[PurePosixPath, str], tuple[str, ...]]
+CORE_RESOURCE_BOOST = 25.0
+
+
+def is_core_resource(project: Project, resource: PurePosixPath) -> bool:
+    """Identify CPython's core translation resources by catalog path."""
+    return project.name == "cpython" and (
+        resource.as_posix() in {"bugs.po", "builtins/functions.po"}
+        or resource.parts[0] == "tutorial"
+    )
 
 
 @dataclass(frozen=True)
@@ -62,7 +71,7 @@ class DocumentScore:
 
 
 @dataclass(frozen=True)
-class PriorityRow:
+class PriorityRow:  # pylint: disable=too-many-instance-attributes
     """One rendered resource with its combined and raw metric values."""
 
     resource: str
@@ -72,6 +81,7 @@ class PriorityRow:
     original_visitors: int | None
     translated_visitors: int | None
     document_score: tuple[int, ...]
+    core_boost: float = 0
 
 
 @dataclass(frozen=True)
@@ -417,6 +427,9 @@ def build_priority_rows(
 
     rows = []
     for index, candidate in enumerate(candidates):
+        core_boost = (
+            CORE_RESOURCE_BOOST if is_core_resource(project, candidate.resource) else 0
+        )
         weighted_ranks = [
             (ranks[index], weight) for ranks, weight in weighted_metric_ranks
         ]
@@ -426,11 +439,13 @@ def build_priority_rows(
                 path=str(candidate.path),
                 priority=100
                 * sum(rank * weight for rank, weight in weighted_ranks)
-                / sum(weight for _, weight in weighted_ranks),
+                / sum(weight for _, weight in weighted_ranks)
+                + core_boost,
                 completion=candidate.completion,
                 original_visitors=candidate.original_visitors,
                 translated_visitors=candidate.translated_visitors,
                 document_score=candidate.document_score,
+                core_boost=core_boost,
             )
         )
     return sorted(rows, key=lambda row: (-row.priority, row.resource))

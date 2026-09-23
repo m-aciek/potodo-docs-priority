@@ -47,6 +47,10 @@ Every available metric receives equal weight after percentile ranking:
 - navigation distance from the documentation index;
 - source-word-weighted completion, with resources nearer 100% ranked higher.
 
+CPython's core resources (`bugs`, `tutorial/*`, and `builtins/functions`)
+receive an additional 25 priority points after the weighted average. The
+result can exceed 100; priority is a score, not a percentage.
+
 CPython and Packaging popularity is summed over the latest 30 Plausible
 snapshots by default. Sphinx has no popularity dataset, so its priority uses
 navigation distance and completion, weighted 100:1 to keep its documentation
@@ -70,8 +74,8 @@ translation repository uses `--pot ../sphinx-doc-translations/locales/pot`.
 
 ## Linked HTML report
 
-Install the optional checksum dependency and build pages containing the ten
-highest-priority unfinished resources for each project:
+Install the optional checksum dependency and build pages containing all
+unfinished resources for each project in priority order:
 
 ```sh
 pip install 'potodo-docs-priority[html]'
@@ -84,6 +88,10 @@ potodo-docs-priority-html \
 
 The default paths match sibling checkouts under `~/projects`; every source,
 translation, and stats path also has a corresponding command-line option.
+The page initially shows the top 15 resources. **Show all** reveals the rest;
+**Show first 15** collapses the list again. Weight changes rank all included
+resources, so hidden resources can move into the visible top 15.
+Use `--limit N` to restrict each project to its N highest-priority resources.
 Packaging requires `../packaging.python.org/locales` from its
 `translation/source` branch.
 
@@ -103,6 +111,13 @@ Each resource includes visible translation progress and a keyboard-focusable
 metric hint with its priority, completion, navigation distance, and available
 original/translated traffic.
 
+The HTML weight controls recalculate scores and reorder resources immediately.
+Each available metric has a non-negative weight; zero disables that metric.
+CPython also has an adjustable core-resource boost. With every metric disabled,
+only the boost contributes, and ties are ordered by resource name. Reset restores
+the project's defaults. Tuning applies to all included resources; with `--limit`,
+their percentile ranks still come from the full set of unfinished resources.
+
 The included GitHub Pages workflow rebuilds this Polish report every day at
 03:17 UTC, on pushes to `main`, and on manual runs. After pushing the project
 to GitHub, select **GitHub Actions** as the Pages build and deployment source
@@ -113,3 +128,6 @@ in the repository settings.
 ```sh
 python -m pytest
 ```
+
+The optional browser regression test also needs `playwright` and its Chromium
+browser (`playwright install chromium`).

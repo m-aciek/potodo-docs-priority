@@ -1,13 +1,14 @@
-"""Build a small HTML report linking priority resources to translation UIs."""
+"""Build an HTML report linking priority resources to translation UIs."""
 
 from __future__ import annotations
 
 import configparser
 import html
 import importlib
+import json
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Iterable, Sequence
 from urllib.parse import quote, urlencode
@@ -16,8 +17,11 @@ import polib
 from potodo.po_file import PoDirectories, PoDirectory
 
 from .document_score import score_sphinx_documents
+from .html_tuning import TUNING_SCRIPT
 from .priority import (
+    CORE_RESOURCE_BOOST,
     PROJECTS,
+    MetricWeights,
     Project,
     build_priority_rows,
     calculate_document_scores,
@@ -44,6 +48,8 @@ class HtmlMetrics:
     original_visitors: int | None = None
     translated_visitors: int | None = None
     document_score: tuple[int, ...] | None = None
+    core_boost: float = 0
+    ranks: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -58,7 +64,7 @@ class HtmlItem:
 
 @dataclass(frozen=True)
 class HtmlSection:
-    """A project heading and its highest-priority resources."""
+    """A project heading and its resources in priority order."""
 
     project: str
     title: str
@@ -200,7 +206,7 @@ def _standard_items(
     stats: Path | None,
     snapshots: int,
     docs_version: str,
-    limit: int,
+    limit: int | None,
 ) -> tuple[HtmlItem, ...]:
     project = PROJECTS[project_name]
     paths = resolve_translation_paths(project, [translations], language)
@@ -218,7 +224,7 @@ def _standard_items(
         language=language,
         docs_version=docs_version,
         show_finished=False,
-    )[:limit]
+    )
     source_root = resolve_source_root(project, source)
     tx_resources = transifex_resources(translations)
     items = []
@@ -245,10 +251,11 @@ def _standard_items(
                     original_visitors=row.original_visitors,
                     translated_visitors=row.translated_visitors,
                     document_score=row.document_score,
+                    core_boost=row.core_boost,
                 ),
             )
         )
-    return tuple(items)
+    return _ranked_items(items, limit)
 
 
 def _occurrence_document(path: str) -> PurePosixPath | None:
@@ -349,7 +356,7 @@ def _packaging_items(
     language: str,
     stats: Path,
     snapshots: int,
-    limit: int,
+    limit: int | None,
 ) -> tuple[HtmlItem, ...]:
     candidates = _packaging_candidates(source, translations, language, stats, snapshots)
     if not candidates:
@@ -394,7 +401,7 @@ def _packaging_items(
         ranked.append((priority, candidate))
     ranked.sort(key=lambda item: (-item[0], item[1].document.as_posix()))
     items = []
-    for priority, candidate in ranked[:limit]:
+    for priority, candidate in ranked:
         resource = candidate.document.as_posix().removesuffix(".rst")
         items.append(
             HtmlItem(
@@ -410,7 +417,34 @@ def _packaging_items(
                 ),
             )
         )
-    return tuple(items)
+    return _ranked_items(items, limit)
+
+
+METRICS = {
+    "completion": ("Completion", "completion", True),
+    "navigation": ("Navigation proximity", "document_score", False),
+    "original_popularity": ("Original visitors", "original_visitors", True),
+    "translated_popularity": ("Translated visitors", "translated_visitors", True),
+}
+
+
+def _ranked_items(items: Sequence[HtmlItem], limit: int | None) -> tuple[HtmlItem, ...]:
+    """Keep full-population percentiles available for interactive reweighting."""
+    ranks = {}
+    for name, (_, attribute, higher) in METRICS.items():
+        values = [getattr(item.metrics, attribute) for item in items]
+        if values and all(value is not None for value in values):
+            ranks[name] = normalized_ranks(values, higher_is_better=higher)
+    return tuple(
+        replace(
+            item,
+            metrics=replace(
+                item.metrics,
+                ranks={name: values[index] for name, values in ranks.items()},
+            ),
+        )
+        for index, item in enumerate(items[:limit])
+    )
 
 
 def build_sections(
@@ -427,7 +461,7 @@ def build_sections(
     sphinx_translations: Path,
     snapshots: int,
     docs_version: str,
-    limit: int,
+    limit: int | None = None,
 ) -> tuple[HtmlSection, ...]:
     """Rank requested projects and return renderable report sections."""
     sections = []
@@ -488,6 +522,40 @@ def project_filename(project: str) -> str:
     return "index.html" if project == "cpython" else f"{project}.html"
 
 
+def _weight_controls(section: HtmlSection) -> str:
+    if not section.items:
+        return ""
+    project = PROJECTS.get(section.project)
+    weights = project.weights if project else MetricWeights()
+    available = {name for item in section.items for name in item.metrics.ranks}
+    lines = [
+        '<form id="weights" hidden><fieldset><legend>Priority weights</legend>',
+        "<p>Higher weights give a metric more influence. Zero disables it. "
+        "Higher completion favors resources closer to being finished.</p>",
+    ]
+    for name, (label, _, _) in METRICS.items():
+        if name in available:
+            lines.append(
+                f'<label>{label} <input type="number" data-metric="{name}" '
+                f'min="0" step="any" required value="{getattr(weights, name):g}">'
+                "</label>"
+            )
+    if section.project == "cpython":
+        lines.append(
+            "<label>Core resources boost (points) "
+            f'<input id="core-boost" type="number" min="0" step="any" required '
+            f'value="{CORE_RESOURCE_BOOST:g}"></label>'
+            "<p>Core resources: bugs, tutorial/*, builtins/functions. "
+            "The boost is added after weighting the metrics.</p>"
+        )
+    lines.append(
+        '<button type="reset">Reset weights</button></fieldset>'
+        f'<p id="tuning-status" role="status">{len(section.items)} unfinished '
+        "resources.</p></form>"
+    )
+    return "\n".join(lines)
+
+
 def render_html(
     section: HtmlSection,
     site_title: str,
@@ -509,28 +577,50 @@ def render_html(
         '<html lang="en">',
         "<head>",
         '  <meta charset="utf-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1">',
         f"  <title>{html.escape(page_title)}</title>",
         "  <style>body { font-family: sans-serif; } progress { width: 8rem; "
-        "vertical-align: middle; } .metric-hint { cursor: help; }</style>",
+        "vertical-align: middle; } .metric-hint { cursor: help; } "
+        "#weights { margin-block: 1rem; } #weights label { display: inline-block; "
+        "margin: .4rem 1rem .4rem 0; } #weights input { width: 5rem; } "
+        "#resources li { margin-block: .65rem; } "
+        ".priority { font-variant-numeric: tabular-nums; }</style>",
         "</head>",
         "<body>",
         f"  <h1>{html.escape(section.title)}</h1>",
     ]
     if navigation:
         lines.append(f"  <nav>{navigation}</nav>")
-    lines.append("  <ul>")
+    lines.append(_weight_controls(section))
+    lines.append('  <ul id="resources">')
     for item in section.items:
         hint = metric_hint(item)
         escaped_hint = html.escape(hint, quote=True)
         progress = progress_html(item)
+        ranks = html.escape(json.dumps(item.metrics.ranks), quote=True)
+        resource = html.escape(item.resource, quote=True)
+        core = str(item.metrics.core_boost > 0).lower()
+        badge = (
+            '<span class="core-resource">Core resource</span> '
+            if core == "true"
+            else ""
+        )
         lines.append(
-            f'    <li><a href="{html.escape(item.url, quote=True)}">'
+            f'    <li data-resource="{resource}" data-ranks="{ranks}" '
+            f'data-core="{core}" data-priority="{item.metrics.priority}">'
+            f'<a href="{html.escape(item.url, quote=True)}">'
             f"{html.escape(item.resource)}</a> – {html.escape(item.title)} "
             f"{progress} "
+            f'{badge}Priority: <span class="priority">{item.metrics.priority:.2f}</span> '
             f'<span class="metric-hint" title="{escaped_hint}" '
             f'aria-label="{escaped_hint}" tabindex="0">ⓘ</span></li>'
         )
     lines.append("  </ul>")
+    lines.append(
+        '<button id="show-more" type="button" aria-controls="resources" '
+        'aria-expanded="false" hidden>Show all</button>'
+    )
+    lines.append(TUNING_SCRIPT)
     lines.extend(("</body>", "</html>", ""))
     return "\n".join(lines)
 

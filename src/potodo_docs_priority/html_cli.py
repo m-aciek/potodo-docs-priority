@@ -17,7 +17,7 @@ from .priority import PROJECTS, positive_int
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="potodo-docs-priority-html",
-        description="Build HTML pages linking the top translation priorities.",
+        description="Build HTML pages linking all translation resources by priority.",
     )
     parser.add_argument(
         "--output", type=Path, required=True, help="directory for generated pages"
@@ -28,7 +28,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--projects", nargs="+", choices=PROJECTS, default=list(PROJECTS)
     )
-    parser.add_argument("--limit", type=positive_int, default=10)
+    parser.add_argument(
+        "--limit",
+        type=positive_int,
+        help="maximum resources per project (default: all)",
+    )
     parser.add_argument("--stats-snapshots", type=positive_int, default=30)
     parser.add_argument("--docs-version", default="3")
     parser.add_argument(

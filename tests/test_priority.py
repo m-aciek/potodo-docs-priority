@@ -2,12 +2,15 @@ import argparse
 import json
 import re
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 
 import pytest
 
 from potodo_docs_priority.cli import main
 from potodo_docs_priority.priority import (
     PROJECTS,
+    DocumentScore,
+    build_priority_rows,
     calculate_document_scores,
     cpython_document_urls,
     load_page_visitors,
@@ -17,6 +20,49 @@ from potodo_docs_priority.priority import (
     positive_int,
     resolve_translation_paths,
 )
+
+
+@pytest.mark.parametrize("project_name", ["cpython", "sphinx", "packaging"])
+def test_core_boost_is_additive_and_scoped_to_cpython(tmp_path, project_name):
+    resources = [
+        "bugs.po",
+        "tutorial/index.po",
+        "tutorial/deeper/example.po",
+        "builtins/functions.po",
+        "library/functions.po",
+        "bugs-extra.po",
+        "tutorial-extra/index.po",
+        "reference/index.po",
+    ]
+    directory = SimpleNamespace(
+        path=tmp_path,
+        files=[
+            SimpleNamespace(path=tmp_path / name, words=10, translated_words=5)
+            for name in resources
+        ],
+    )
+    scores = {
+        PurePosixPath(name).with_suffix(".pot"): DocumentScore((), (1,))
+        for name in resources
+    }
+    rows = build_priority_rows(
+        [directory],
+        scores,
+        None,
+        None,
+        project=PROJECTS[project_name],
+        language="pl",
+        docs_version="3",
+        show_finished=False,
+    )
+    for row in rows:
+        expected_boost = (
+            25 if project_name == "cpython" and row.resource in resources[:4] else 0
+        )
+        assert row.core_boost == expected_boost
+        assert row.priority == 50 + expected_boost
+    if project_name == "cpython":
+        assert {row.resource for row in rows[:4]} == set(resources[:4])
 
 
 def _write_snapshot(stats_dir, site, date, prefix, rows):

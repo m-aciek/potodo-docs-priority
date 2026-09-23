@@ -180,11 +180,13 @@ def test_metric_hint_omits_unavailable_popularity():
     assert progress_html(item).endswith('<span class="progress-label">0.00%</span>')
 
 
-def test_packaging_section_splits_compact_catalog_by_document(tmp_path):
+@pytest.mark.parametrize("limit", [None, 2])
+def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
     source = tmp_path / "source"
     source.mkdir()
     (source / "index.rst").write_text(
-        "Guide\n=====\n\n.. toctree::\n\n   overview\n   flow\n", encoding="utf-8"
+        "Guide\n=====\n\n.. toctree::\n\n   overview\n   flow\n   finished\n",
+        encoding="utf-8",
     )
     (source / "overview.rst").write_text(
         "Overview of Python Packaging\n============================\n",
@@ -193,6 +195,7 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path):
     (source / "flow.rst").write_text(
         "The Packaging Flow\n==================\n", encoding="utf-8"
     )
+    (source / "finished.rst").write_text("Finished\n========\n", encoding="utf-8")
     messages = tmp_path / "locales" / "pl" / "LC_MESSAGES" / "messages.po"
     messages.parent.mkdir(parents=True)
     messages.write_text(
@@ -200,7 +203,8 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path):
         '#: ../source/overview.rst:1\nmsgid "Overview of Python Packaging"\n'
         'msgstr "Przegląd pakowania w Pythonie"\n\n'
         '#: ../source/overview.rst:3\nmsgid "Translate this overview"\nmsgstr ""\n\n'
-        '#: ../source/flow.rst:1\nmsgid "The Packaging Flow"\nmsgstr ""\n',
+        '#: ../source/flow.rst:1\nmsgid "The Packaging Flow"\nmsgstr ""\n\n'
+        '#: ../source/finished.rst:1\nmsgid "Finished"\nmsgstr "Gotowe"\n',
         encoding="utf-8",
     )
     _write_snapshot(
@@ -232,15 +236,54 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path):
         sphinx_translations=Path("unused"),
         snapshots=30,
         docs_version="3",
-        limit=2,
+        limit=limit,
     )
-    assert [item.resource for item in sections[0].items] == ["index", "overview"]
+    expected = ["index", "overview", "flow"][:limit]
+    assert [item.resource for item in sections[0].items] == expected
+    assert sections[0].items[0].metrics.ranks["original_popularity"] == 1
     assert sections[0].items[1].title == "Przegląd pakowania w Pythonie"
     assert (
         sections[0]
         .items[1]
         .url.endswith("?checksum=" + weblate_checksum("Overview of Python Packaging"))
     )
+
+
+def test_html_defaults_to_all_unfinished_resources(tmp_path):
+    args = parse_args(
+        ["--output", "site", "--language", "pl", "--sphinx-language", "pl_PL"]
+    )
+    assert args.limit is None
+    source = tmp_path / "source"
+    source.mkdir()
+    translations = tmp_path / "translations"
+    translations.mkdir()
+    for index in range(13):
+        name = "index" if index == 0 else f"page{index}"
+        (source / f"{name}.rst").write_text("Title\n=====\n", encoding="utf-8")
+        po = polib.POFile()
+        po.append(polib.POEntry(msgid="Title", msgstr="Tytuł" if index == 12 else ""))
+        po.save(str(translations / f"{name}.po"))
+    sections = build_sections(
+        projects=["sphinx"],
+        language="pl",
+        sphinx_language="pl_PL",
+        plausible_stats=tmp_path,
+        cpython_source=tmp_path,
+        cpython_translations=tmp_path,
+        packaging_source=tmp_path,
+        packaging_translations=tmp_path,
+        sphinx_source=source,
+        sphinx_translations=translations,
+        snapshots=30,
+        docs_version="3",
+    )
+    assert len(sections[0].items) == 12
+    assert "page12" not in {item.resource for item in sections[0].items}
+    output = render_html(sections[0], "Priorities")
+    assert output.count("<li data-resource=") == 12
+    assert 'data-metric="navigation" min="0" step="any" required value="100"' in output
+    assert 'data-metric="original_popularity"' not in output
 
 
 def test_packaging_section_explains_missing_translation_branch(tmp_path):
