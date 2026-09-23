@@ -27,7 +27,7 @@ from .priority import (
     calculate_document_scores,
     load_page_visitors,
     normalize_language,
-    normalized_ranks,
+    normalized_metric_values,
     packaging_document_urls,
     resolve_source_root,
     resolve_translation_paths,
@@ -362,34 +362,34 @@ def _packaging_items(
     if not candidates:
         return ()
     project = PROJECTS["packaging"]
-    metrics: list[tuple[Sequence[float | int | tuple[int, ...]], float, bool]] = [
+    metrics: list[tuple[str, Sequence[float | int | tuple[int, ...]], float]] = [
         (
+            "completion",
             [candidate.completion for candidate in candidates],
             project.weights.completion,
-            True,
         ),
         (
+            "navigation",
             [candidate.document_score for candidate in candidates],
             project.weights.navigation,
-            False,
         ),
         (
+            "original_popularity",
             [candidate.original_visitors for candidate in candidates],
             project.weights.original_popularity,
-            True,
         ),
     ]
     if candidates[0].translated_visitors is not None:
         metrics.append(
             (
+                "translated_popularity",
                 [candidate.translated_visitors or 0 for candidate in candidates],
                 project.weights.translated_popularity,
-                True,
             )
         )
     weighted_ranks = [
-        (normalized_ranks(values, higher_is_better=higher), weight)
-        for values, weight, higher in metrics
+        (normalized_metric_values(name, values), weight)
+        for name, values, weight in metrics
     ]
     ranked = []
     for index, candidate in enumerate(candidates):
@@ -431,10 +431,10 @@ METRICS = {
 def _ranked_items(items: Sequence[HtmlItem], limit: int | None) -> tuple[HtmlItem, ...]:
     """Keep full-population percentiles available for interactive reweighting."""
     ranks = {}
-    for name, (_, attribute, higher) in METRICS.items():
+    for name, (_, attribute, _) in METRICS.items():
         values = [getattr(item.metrics, attribute) for item in items]
         if values and all(value is not None for value in values):
-            ranks[name] = normalized_ranks(values, higher_is_better=higher)
+            ranks[name] = normalized_metric_values(name, values)
     return tuple(
         replace(
             item,
@@ -589,12 +589,15 @@ def render_html(
         "#weights { margin-block: 1rem; } #weights label { display: inline-block; "
         "margin: .4rem 1rem .4rem 0; } #weights input { width: 5rem; } "
         ".table-scroll { overflow-x: auto; margin-block: 1rem; } "
-        "table { border-collapse: collapse; width: 100%; } "
+        "table { border-collapse: collapse; width: 100%; table-layout: fixed; } "
         "th, td { padding: .6rem .8rem; border-bottom: 1px solid #ccc; "
         "text-align: right; vertical-align: top; } "
         "thead th { white-space: nowrap; } th:first-child { text-align: left; } "
+        ".resource-column { width: 18rem; } .priority-column { width: 8rem; } "
         "tbody th { font-weight: normal; min-width: 16rem; } "
         "td { font-variant-numeric: tabular-nums; white-space: nowrap; } "
+        "th.metric-column, td.metric-column { width: 10rem; min-width: 10rem; } "
+        "td.metric-column { background-repeat: no-repeat; background-size: 100% 100%; } "
         ".resource-title { display: block; margin-top: .2rem; } "
         ".core-resource { display: block; margin-top: .2rem; font-size: .85em; }"
         "</style>",
@@ -609,11 +612,16 @@ def render_html(
         (
             '<div class="table-scroll" tabindex="0" role="region" '
             'aria-label="Scrollable resource metrics">',
-            '<table aria-label="Translation priorities"><thead><tr>'
+            '<table aria-label="Translation priorities"><colgroup>'
+            '<col class="resource-column"><col class="priority-column">'
+            + "".join('<col class="metric-column">' for _ in columns)
+            + "</colgroup><thead><tr>"
             '<th scope="col">Resource</th><th scope="col">Priority</th>',
         )
     )
-    lines.extend(f'<th scope="col">{label}</th>' for _, label, _ in columns)
+    lines.extend(
+        f'<th class="metric-column" scope="col">{label}</th>' for _, label, _ in columns
+    )
     lines.append('</tr></thead><tbody id="resources">')
     for item in section.items:
         ranks = html.escape(json.dumps(item.metrics.ranks), quote=True)
@@ -636,13 +644,19 @@ def render_html(
             value = getattr(item.metrics, attribute)
             if value is None:
                 formatted = "—"
+                rank_style = ""
             elif name == "completion":
                 formatted = f"{value:.2f}%"
+                rank_style = _metric_background(item, name)
             elif name == "navigation":
                 formatted = ".".join(map(str, value))
+                rank_style = _metric_background(item, name)
             else:
                 formatted = f"{value:,}"
-            lines.append(f'<td class="{name}">{formatted}</td>')
+                rank_style = _metric_background(item, name)
+            lines.append(
+                f'<td class="metric-column {name}"{rank_style}>{formatted}</td>'
+            )
         lines.append("</tr>")
     lines.append("  </tbody></table></div>")
     lines.append(
@@ -652,6 +666,16 @@ def render_html(
     lines.append(TUNING_SCRIPT)
     lines.extend(("</body>", "</html>", ""))
     return "\n".join(lines)
+
+
+def _metric_background(item: HtmlItem, name: str) -> str:
+    """Return a normalized metric bar as an escaped inline style."""
+    rank = min(1, max(0, item.metrics.ranks.get(name, 0)))
+    percentage = f"{rank * 100:.4f}%"
+    return (
+        ' style="background-image: linear-gradient(to right, '
+        f'rgba(30, 136, 229, .22) {percentage}, transparent {percentage});"'
+    )
 
 
 def render_index(sections: Sequence[HtmlSection], title: str) -> str:

@@ -47,6 +47,12 @@ Every available metric receives equal weight after percentile ranking:
 - navigation distance from the documentation index;
 - source-word-weighted completion, with resources nearer 100% ranked higher.
 
+The metric scales match their meanings: completion uses its linear 0–100%
+scale, navigation distance uses percentile ranking with shorter distances better,
+and visitor counts use `log1p` scaling followed by linear min–max normalization.
+The displayed raw values remain unchanged; only the score and background bar use
+these normalized values.
+
 CPython's core resources (`bugs`, `tutorial/*`, and `builtins/functions`)
 receive an additional 25 priority points after the weighted average. The
 result can exceed 100; priority is a score, not a percentage.

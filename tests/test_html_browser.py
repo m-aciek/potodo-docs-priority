@@ -54,6 +54,10 @@ def test_weight_tuning_reorders_table_and_resets(tmp_path):
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(page_path.as_uri())
         rows = page.locator("#resources > tr")
+        assert page.locator("td.metric-column").count() > 0
+        assert page.locator("td.metric-column").first.evaluate(
+            "cell => getComputedStyle(cell).backgroundImage.includes('linear-gradient')"
+        )
 
         def resources():
             return rows.evaluate_all("rows => rows.map(row => row.dataset.resource)")

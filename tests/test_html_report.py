@@ -106,12 +106,21 @@ def test_render_html_escapes_titles_and_links():
     assert "Use &lt;tools&gt; &amp; &quot;build&quot;" in output
     assert "?a=1&amp;b=2" in output
     assert '<table aria-label="Translation priorities">' in output
-    assert '<th scope="col">Completion</th>' in output
+    assert '<th class="metric-column" scope="col">Completion</th>' in output
     assert '<td class="priority">90.00</td>' in output
-    assert '<td class="completion">25.50%</td>' in output
-    assert '<td class="original_popularity">1,234</td>' in output
-    assert '<td class="translated_popularity">12</td>' in output
-    assert '<td class="navigation">1.2</td>' in output
+    assert '<td class="metric-column completion"' in output and ">25.50%</td>" in output
+    assert (
+        '<td class="metric-column original_popularity"' in output
+        and ">1,234</td>" in output
+    )
+    assert (
+        '<td class="metric-column translated_popularity"' in output
+        and ">12</td>" in output
+    )
+    assert '<td class="metric-column navigation"' in output and ">1.2</td>" in output
+    assert 'class="metric-column completion"' in output
+    assert "background-image: linear-gradient(to right" in output
+    assert "width: 10rem" in output
     assert "metric-hint" not in output
     assert "<progress" not in output
 
@@ -179,8 +188,8 @@ def test_table_omits_unavailable_popularity():
         metrics=HtmlMetrics(priority=99.45, completion=0, document_score=(0,)),
     )
     output = render_html(HtmlSection("sphinx", "Sphinx", (item,)), "Priorities")
-    assert '<td class="completion">0.00%</td>' in output
-    assert '<td class="navigation">0</td>' in output
+    assert '<td class="metric-column completion"' in output and ">0.00%</td>" in output
+    assert '<td class="metric-column navigation"' in output and ">0</td>" in output
     assert "Original visitors" not in output
     assert "Translated visitors" not in output
 

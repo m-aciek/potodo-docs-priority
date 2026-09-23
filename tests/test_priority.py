@@ -15,6 +15,7 @@ from potodo_docs_priority.priority import (
     cpython_document_urls,
     load_page_visitors,
     normalize_language,
+    normalized_metric_values,
     normalized_ranks,
     packaging_document_urls,
     positive_int,
@@ -161,6 +162,15 @@ def test_normalized_ranks_follow_metric_direction_and_keep_ties():
     assert normalized_ranks([10, 20, 20], higher_is_better=True) == [0, 0.75, 0.75]
     assert normalized_ranks([(1, 1), (2, 1)], higher_is_better=False) == [1, 0]
     assert normalized_ranks([0, 0], higher_is_better=True) == [0.5, 0.5]
+
+
+def test_metric_normalization_matches_metric_semantics():
+    assert normalized_metric_values("completion", [0, 50, 100]) == [0, 0.5, 1]
+    assert normalized_metric_values("navigation", [(0,), (1,), (2,)]) == [1, 0.5, 0]
+    visitors = normalized_metric_values("original_popularity", [0, 10, 1000])
+    assert visitors[0] == 0
+    assert 0 < visitors[1] < visitors[2] == 1
+    assert normalized_metric_values("translated_popularity", [0, 0]) == [0.5, 0.5]
 
 
 def test_positive_int():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -260,7 +261,7 @@ def normalized_ranks(values: Sequence[Any], *, higher_is_better: bool) -> list[f
     """Return percentile ranks from worst (0) to best (1), averaging ties."""
     if len(values) < 2:
         return [0.5] * len(values)
-    ordered = sorted(values, reverse=not higher_is_better)
+    ordered = sorted(values)
     ranks = {}
     start = 0
     while start < len(ordered):
@@ -268,9 +269,25 @@ def normalized_ranks(values: Sequence[Any], *, higher_is_better: bool) -> list[f
         end = start + 1
         while end < len(ordered) and ordered[end] == value:
             end += 1
-        ranks[value] = (start + end - 1) / (2 * (len(ordered) - 1))
+        rank = (start + end - 1) / (2 * (len(ordered) - 1))
+        ranks[value] = rank if higher_is_better else 1 - rank
         start = end
     return [ranks[value] for value in values]
+
+
+def normalized_metric_values(name: str, values: Sequence[Any]) -> list[float]:
+    """Normalize a metric according to its meaning and preserve good direction."""
+    if name == "completion":
+        return [min(1, max(0, float(value) / 100)) for value in values]
+    if name == "navigation":
+        return normalized_ranks(values, higher_is_better=False)
+    if name in {"original_popularity", "translated_popularity"}:
+        logged = [math.log1p(max(0, int(value))) for value in values]
+        if len(logged) < 2 or min(logged) == max(logged):
+            return [0.5] * len(logged)
+        low, high = min(logged), max(logged)
+        return [(value - low) / (high - low) for value in logged]
+    raise ValueError(f"unknown metric {name!r}")
 
 
 def _completion(po_file: PoFileStats) -> float:
@@ -390,16 +407,14 @@ def build_priority_rows(
         return []
     weighted_metric_ranks = [
         (
-            normalized_ranks(
-                [candidate.completion for candidate in candidates],
-                higher_is_better=True,
+            normalized_metric_values(
+                "completion", [candidate.completion for candidate in candidates]
             ),
             project.weights.completion,
         ),
         (
-            normalized_ranks(
-                [candidate.document_score for candidate in candidates],
-                higher_is_better=False,
+            normalized_metric_values(
+                "navigation", [candidate.document_score for candidate in candidates]
             ),
             project.weights.navigation,
         ),
@@ -407,9 +422,9 @@ def build_priority_rows(
     if candidates[0].original_visitors is not None:
         weighted_metric_ranks.append(
             (
-                normalized_ranks(
+                normalized_metric_values(
+                    "original_popularity",
                     [candidate.original_visitors for candidate in candidates],
-                    higher_is_better=True,
                 ),
                 project.weights.original_popularity,
             )
@@ -417,9 +432,9 @@ def build_priority_rows(
     if candidates[0].translated_visitors is not None:
         weighted_metric_ranks.append(
             (
-                normalized_ranks(
+                normalized_metric_values(
+                    "translated_popularity",
                     [candidate.translated_visitors for candidate in candidates],
-                    higher_is_better=True,
                 ),
                 project.weights.translated_popularity,
             )
