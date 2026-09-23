@@ -25,6 +25,7 @@ from .priority import (
     Project,
     build_priority_rows,
     calculate_document_scores,
+    cpython_document_urls,
     load_page_visitors,
     normalize_language,
     normalized_metric_values,
@@ -60,6 +61,7 @@ class HtmlItem:
     title: str
     url: str
     metrics: HtmlMetrics
+    documentation_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,23 @@ def weblate_url(language: str, entry: POEntry) -> str:
     )
 
 
+def documentation_url(
+    project: str, document: PurePosixPath, language: str, docs_version: str
+) -> str:
+    """Return the public URL of a rendered documentation page."""
+    if project == "cpython":
+        path = cpython_document_urls(
+            document, f"{normalize_language(language)}/{docs_version}"
+        )[0]
+        return f"https://docs.python.org{path}"
+    if project == "packaging":
+        path = packaging_document_urls(document, normalize_language(language))[0]
+        return f"https://packaging.python.org{path}"
+    stem = document.as_posix().removesuffix(".rst")
+    suffix = "" if stem == "index" else f"{stem}.html"
+    return f"https://www.sphinx-doc.org/en/master/{suffix}"
+
+
 def _load_visitors(
     project: Project,
     stats: Path | None,
@@ -252,6 +271,16 @@ def _standard_items(
                     translated_visitors=row.translated_visitors,
                     document_score=row.document_score,
                     core_boost=row.core_boost,
+                ),
+                documentation_url=(
+                    documentation_url(
+                        project_name,
+                        catalog.documents[0],
+                        language,
+                        docs_version,
+                    )
+                    if catalog.documents
+                    else None
                 ),
             )
         )
@@ -414,6 +443,9 @@ def _packaging_items(
                     original_visitors=candidate.original_visitors,
                     translated_visitors=candidate.translated_visitors,
                     document_score=candidate.document_score,
+                ),
+                documentation_url=documentation_url(
+                    "packaging", candidate.document, language, "latest"
                 ),
             )
         )
@@ -632,12 +664,18 @@ def render_html(
             if core == "true"
             else ""
         )
+        docs_link = (
+            f' <a class="documentation-link" '
+            f'href="{html.escape(item.documentation_url, quote=True)}">docs</a>'
+            if item.documentation_url
+            else ""
+        )
         lines.append(
             f'    <tr data-resource="{resource}" data-ranks="{ranks}" '
             f'data-core="{core}" data-priority="{item.metrics.priority}">'
             f'<th scope="row"><a href="{html.escape(item.url, quote=True)}">'
             f"{html.escape(item.resource)}</a>"
-            f'<span class="resource-title">{html.escape(item.title)}</span>{badge}</th>'
+            f'{docs_link}<span class="resource-title">{html.escape(item.title)}</span>{badge}</th>'
             f'<td class="priority">{item.metrics.priority:.2f}</td>'
         )
         for name, _, attribute in columns:

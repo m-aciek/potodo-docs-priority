@@ -178,7 +178,10 @@ def apply_project_catalog_semantics(
     project: Project, scores: dict[PurePosixPath, DocumentScore]
 ) -> dict[PurePosixPath, DocumentScore]:
     """Apply project meanings that cannot be inferred from source filenames."""
-    if project.name != "cpython" or PurePosixPath("sphinx.pot") not in scores:
+    if (
+        project.name not in {"cpython", "sphinx"}
+        or PurePosixPath("sphinx.pot") not in scores
+    ):
         return scores
     scores = scores.copy()
     scores[PurePosixPath("sphinx.pot")] = DocumentScore(

@@ -198,6 +198,14 @@ def test_sphinx_scores_start_at_index(tmp_path):
     assert scores[PurePosixPath("second.pot")].score == (1, 2)
 
 
+def test_sphinx_template_catalog_links_to_index(tmp_path):
+    scores = calculate_document_scores(PROJECTS["sphinx"], _write_sphinx_tree(tmp_path))
+    assert scores[PurePosixPath("sphinx.pot")].documents == (
+        PurePosixPath("index.rst"),
+    )
+    assert scores[PurePosixPath("sphinx.pot")].score == (0,)
+
+
 def test_packaging_compacts_all_documents_into_messages(tmp_path):
     scores = calculate_document_scores(
         PROJECTS["packaging"], _write_sphinx_tree(tmp_path)

@@ -123,6 +123,7 @@ def test_render_html_escapes_titles_and_links():
     assert "width: 10rem" in output
     assert "metric-hint" not in output
     assert "<progress" not in output
+    assert 'class="documentation-link"' not in output
 
 
 def test_write_pages_creates_an_index_and_one_page_per_project(tmp_path):
@@ -192,6 +193,21 @@ def test_table_omits_unavailable_popularity():
     assert '<td class="metric-column navigation"' in output and ">0</td>" in output
     assert "Original visitors" not in output
     assert "Translated visitors" not in output
+
+
+def test_table_links_to_rendered_documentation():
+    item = HtmlItem(
+        resource="tutorial/index",
+        title="Tutorial",
+        url="https://translate.example.test/tutorial",
+        documentation_url="https://docs.python.org/pl/3/tutorial/",
+        metrics=HtmlMetrics(priority=80, completion=50, document_score=(1, 1)),
+    )
+    output = render_html(HtmlSection("cpython", "CPython", (item,)), "Priorities")
+    assert (
+        '<a class="documentation-link" '
+        'href="https://docs.python.org/pl/3/tutorial/">docs</a>'
+    ) in output
 
 
 @pytest.mark.parametrize("limit", [None, 2])
