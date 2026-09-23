@@ -529,7 +529,8 @@ def _weight_controls(section: HtmlSection) -> str:
     weights = project.weights if project else MetricWeights()
     available = {name for item in section.items for name in item.metrics.ranks}
     lines = [
-        '<form id="weights" hidden><fieldset><legend>Priority weights</legend>',
+        f'<form id="weights" data-project="{html.escape(section.project, quote=True)}" '
+        "hidden><fieldset><legend>Priority weights</legend>",
         "<p>Higher weights give a metric more influence. Zero disables it. "
         "Higher completion favors resources closer to being finished.</p>",
     ]
@@ -572,6 +573,11 @@ def render_html(
         if len(sections) > 1
         else ""
     )
+    columns = [
+        (name, "Navigation distance" if name == "navigation" else label, attribute)
+        for name, (label, attribute, _) in METRICS.items()
+        if any(getattr(item.metrics, attribute) is not None for item in section.items)
+    ]
     lines = [
         "<!doctype html>",
         '<html lang="en">',
@@ -579,12 +585,19 @@ def render_html(
         '  <meta charset="utf-8">',
         '  <meta name="viewport" content="width=device-width, initial-scale=1">',
         f"  <title>{html.escape(page_title)}</title>",
-        "  <style>body { font-family: sans-serif; } progress { width: 8rem; "
-        "vertical-align: middle; } .metric-hint { cursor: help; } "
+        "  <style>body { font-family: sans-serif; } "
         "#weights { margin-block: 1rem; } #weights label { display: inline-block; "
         "margin: .4rem 1rem .4rem 0; } #weights input { width: 5rem; } "
-        "#resources li { margin-block: .65rem; } "
-        ".priority { font-variant-numeric: tabular-nums; }</style>",
+        ".table-scroll { overflow-x: auto; margin-block: 1rem; } "
+        "table { border-collapse: collapse; width: 100%; } "
+        "th, td { padding: .6rem .8rem; border-bottom: 1px solid #ccc; "
+        "text-align: right; vertical-align: top; } "
+        "thead th { white-space: nowrap; } th:first-child { text-align: left; } "
+        "tbody th { font-weight: normal; min-width: 16rem; } "
+        "td { font-variant-numeric: tabular-nums; white-space: nowrap; } "
+        ".resource-title { display: block; margin-top: .2rem; } "
+        ".core-resource { display: block; margin-top: .2rem; font-size: .85em; }"
+        "</style>",
         "</head>",
         "<body>",
         f"  <h1>{html.escape(section.title)}</h1>",
@@ -592,11 +605,17 @@ def render_html(
     if navigation:
         lines.append(f"  <nav>{navigation}</nav>")
     lines.append(_weight_controls(section))
-    lines.append('  <ul id="resources">')
+    lines.extend(
+        (
+            '<div class="table-scroll" tabindex="0" role="region" '
+            'aria-label="Scrollable resource metrics">',
+            '<table aria-label="Translation priorities"><thead><tr>'
+            '<th scope="col">Resource</th><th scope="col">Priority</th>',
+        )
+    )
+    lines.extend(f'<th scope="col">{label}</th>' for _, label, _ in columns)
+    lines.append('</tr></thead><tbody id="resources">')
     for item in section.items:
-        hint = metric_hint(item)
-        escaped_hint = html.escape(hint, quote=True)
-        progress = progress_html(item)
         ranks = html.escape(json.dumps(item.metrics.ranks), quote=True)
         resource = html.escape(item.resource, quote=True)
         core = str(item.metrics.core_boost > 0).lower()
@@ -606,16 +625,26 @@ def render_html(
             else ""
         )
         lines.append(
-            f'    <li data-resource="{resource}" data-ranks="{ranks}" '
+            f'    <tr data-resource="{resource}" data-ranks="{ranks}" '
             f'data-core="{core}" data-priority="{item.metrics.priority}">'
-            f'<a href="{html.escape(item.url, quote=True)}">'
-            f"{html.escape(item.resource)}</a> – {html.escape(item.title)} "
-            f"{progress} "
-            f'{badge}Priority: <span class="priority">{item.metrics.priority:.2f}</span> '
-            f'<span class="metric-hint" title="{escaped_hint}" '
-            f'aria-label="{escaped_hint}" tabindex="0">ⓘ</span></li>'
+            f'<th scope="row"><a href="{html.escape(item.url, quote=True)}">'
+            f"{html.escape(item.resource)}</a>"
+            f'<span class="resource-title">{html.escape(item.title)}</span>{badge}</th>'
+            f'<td class="priority">{item.metrics.priority:.2f}</td>'
         )
-    lines.append("  </ul>")
+        for name, _, attribute in columns:
+            value = getattr(item.metrics, attribute)
+            if value is None:
+                formatted = "—"
+            elif name == "completion":
+                formatted = f"{value:.2f}%"
+            elif name == "navigation":
+                formatted = ".".join(map(str, value))
+            else:
+                formatted = f"{value:,}"
+            lines.append(f'<td class="{name}">{formatted}</td>')
+        lines.append("</tr>")
+    lines.append("  </tbody></table></div>")
     lines.append(
         '<button id="show-more" type="button" aria-controls="resources" '
         'aria-expanded="false" hidden>Show all</button>'
@@ -646,33 +675,3 @@ def render_index(sections: Sequence[HtmlSection], title: str) -> str:
         )
     lines.extend(("  </ul>", "</body>", "</html>", ""))
     return "\n".join(lines)
-
-
-def metric_hint(item: HtmlItem) -> str:
-    """Format available priority metrics for a compact HTML tooltip."""
-    item_metrics = item.metrics
-    metrics = [f"Priority: {item_metrics.priority:.2f}"]
-    if item_metrics.completion is not None:
-        metrics.append(f"completion: {item_metrics.completion:.2f}%")
-    if item_metrics.original_visitors is not None:
-        metrics.append(f"original visitors: {item_metrics.original_visitors:,}")
-    if item_metrics.translated_visitors is not None:
-        metrics.append(f"translated visitors: {item_metrics.translated_visitors:,}")
-    if item_metrics.document_score is not None:
-        distance = ".".join(map(str, item_metrics.document_score))
-        metrics.append(f"distance: {distance}")
-    return "; ".join(metrics)
-
-
-def progress_html(item: HtmlItem) -> str:
-    """Render visible, accessible translation completion progress."""
-    completion = item.metrics.completion
-    if completion is None:
-        return ""
-    percentage = f"{completion:.2f}%"
-    label = html.escape(f"Translation progress: {percentage}", quote=True)
-    return (
-        f'<progress value="{completion:.2f}" max="100" '
-        f'aria-label="{label}">{percentage}</progress> '
-        f'<span class="progress-label">{percentage}</span>'
-    )

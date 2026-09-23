@@ -107,9 +107,10 @@ The output directory uses the CPython report as `index.html` and creates
 is excluded with `--projects`, `index.html` instead links the selected project
 pages.
 
-Each resource includes visible translation progress and a keyboard-focusable
-metric hint with its priority, completion, navigation distance, and available
-original/translated traffic.
+Resources appear in a table with separate columns for priority, completion,
+navigation distance, and available original/translated traffic. Completion is
+shown as a percentage alongside the other metrics. On narrow screens, the table
+can be scrolled horizontally.
 
 The HTML weight controls recalculate scores and reorder resources immediately.
 Each available metric has a non-negative weight; zero disables that metric.
@@ -117,6 +118,8 @@ CPython also has an adjustable core-resource boost. With every metric disabled,
 only the boost contributes, and ties are ordered by resource name. Reset restores
 the project's defaults. Tuning applies to all included resources; with `--limit`,
 their percentile ranks still come from the full set of unfinished resources.
+Weights and the core-resource boost are saved in the browser's local storage,
+separately for each project, and restored on reload. Reset also saves the defaults.
 
 The included GitHub Pages workflow rebuilds this Polish report every day at
 03:17 UTC, on pushes to `main`, and on manual runs. After pushing the project

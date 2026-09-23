@@ -10,8 +10,6 @@ from potodo_docs_priority.html_report import (
     HtmlMetrics,
     HtmlSection,
     build_sections,
-    metric_hint,
-    progress_html,
     render_html,
     render_index,
     rst_title,
@@ -107,11 +105,15 @@ def test_render_html_escapes_titles_and_links():
     assert "<nav>" not in output
     assert "Use &lt;tools&gt; &amp; &quot;build&quot;" in output
     assert "?a=1&amp;b=2" in output
-    assert 'class="metric-hint"' in output
-    assert '<progress value="25.50" max="100"' in output
-    assert '<span class="progress-label">25.50%</span>' in output
-    assert "Priority: 90.00; completion: 25.50%; original visitors: 1,234; " in output
-    assert "translated visitors: 12; distance: 1.2" in output
+    assert '<table aria-label="Translation priorities">' in output
+    assert '<th scope="col">Completion</th>' in output
+    assert '<td class="priority">90.00</td>' in output
+    assert '<td class="completion">25.50%</td>' in output
+    assert '<td class="original_popularity">1,234</td>' in output
+    assert '<td class="translated_popularity">12</td>' in output
+    assert '<td class="navigation">1.2</td>' in output
+    assert "metric-hint" not in output
+    assert "<progress" not in output
 
 
 def test_write_pages_creates_an_index_and_one_page_per_project(tmp_path):
@@ -169,15 +171,18 @@ def test_render_index_escapes_title():
     assert '<a href="index.html">CPython &amp; docs</a>' in output
 
 
-def test_metric_hint_omits_unavailable_popularity():
+def test_table_omits_unavailable_popularity():
     item = HtmlItem(
         resource="index",
         title="Sphinx",
         url="https://example.test/",
         metrics=HtmlMetrics(priority=99.45, completion=0, document_score=(0,)),
     )
-    assert metric_hint(item) == "Priority: 99.45; completion: 0.00%; distance: 0"
-    assert progress_html(item).endswith('<span class="progress-label">0.00%</span>')
+    output = render_html(HtmlSection("sphinx", "Sphinx", (item,)), "Priorities")
+    assert '<td class="completion">0.00%</td>' in output
+    assert '<td class="navigation">0</td>' in output
+    assert "Original visitors" not in output
+    assert "Translated visitors" not in output
 
 
 @pytest.mark.parametrize("limit", [None, 2])
@@ -281,7 +286,7 @@ def test_html_defaults_to_all_unfinished_resources(tmp_path):
     assert len(sections[0].items) == 12
     assert "page12" not in {item.resource for item in sections[0].items}
     output = render_html(sections[0], "Priorities")
-    assert output.count("<li data-resource=") == 12
+    assert output.count("<tr data-resource=") == 12
     assert 'data-metric="navigation" min="0" step="any" required value="100"' in output
     assert 'data-metric="original_popularity"' not in output
 

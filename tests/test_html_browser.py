@@ -13,7 +13,7 @@ from potodo_docs_priority.html_report import (
 playwright = pytest.importorskip("playwright.sync_api")
 
 
-def test_weight_tuning_reorders_updates_hints_and_resets(tmp_path):
+def test_weight_tuning_reorders_table_and_resets(tmp_path):
     items = [
         HtmlItem(
             "guide",
@@ -53,7 +53,7 @@ def test_weight_tuning_reorders_updates_hints_and_resets(tmp_path):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(page_path.as_uri())
-        rows = page.locator("#resources > li")
+        rows = page.locator("#resources > tr")
 
         def resources():
             return rows.evaluate_all("rows => rows.map(row => row.dataset.resource)")
@@ -70,9 +70,11 @@ def test_weight_tuning_reorders_updates_hints_and_resets(tmp_path):
         page.get_by_label("Navigation proximity", exact=True).fill("0")
         assert resources() == ["bugs", "guide"]
         assert rows.first.locator(".priority").inner_text() == "125.00"
-        hint = rows.first.locator(".metric-hint")
-        assert hint.get_attribute("title").startswith("Priority: 125.00;")
-        assert hint.get_attribute("aria-label") == hint.get_attribute("title")
+        assert rows.first.locator(".completion").inner_text() == "0.00%"
+        assert rows.first.locator(".original_popularity").inner_text() == "100"
+        assert page.get_by_role(
+            "columnheader", name="Completion", exact=True
+        ).is_visible()
         page.get_by_label("Core resources boost (points)").fill("0")
         assert rows.first.locator(".priority").inner_text() == "100.00"
 
@@ -89,6 +91,110 @@ def test_weight_tuning_reorders_updates_hints_and_resets(tmp_path):
         page.get_by_role("button", name="Reset weights").click()
         assert resources() == ["guide", "bugs"]
         assert rows.locator(".priority").all_text_contents() == original_scores
+        page.get_by_label("Completion", exact=True).fill("2.5")
+        page.get_by_label("Core resources boost (points)").fill("40")
+        tuned_scores = rows.locator(".priority").all_text_contents()
+        tuned_resources = resources()
+        page.reload()
+        assert page.get_by_label("Completion", exact=True).input_value() == "2.5"
+        assert page.get_by_label("Core resources boost (points)").input_value() == "40"
+        assert resources() == tuned_resources
+        assert rows.locator(".priority").all_text_contents() == tuned_scores
+        page.get_by_label("Completion", exact=True).fill("-1")
+        page.reload()
+        assert page.get_by_label("Completion", exact=True).input_value() == "2.5"
+        page.get_by_role("button", name="Reset weights").click()
+        page.reload()
+        assert page.get_by_label("Completion", exact=True).input_value() == "1"
+        assert page.get_by_label("Core resources boost (points)").input_value() == "25"
+        assert rows.locator(".priority").all_text_contents() == original_scores
+        assert not errors
+        browser.close()
+
+
+def test_saved_weights_are_separate_for_each_project():
+    items = _ranked_items(
+        (
+            HtmlItem(
+                "index",
+                "Index",
+                "https://example.test/",
+                HtmlMetrics(priority=50, completion=50, document_score=(0,)),
+            ),
+        ),
+        None,
+    )
+    pages = {
+        project: render_html(HtmlSection(project, project, items), "Priorities")
+        for project in ("cpython", "sphinx")
+    }
+    with playwright.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page()
+        page.route(
+            "https://priorities.test/*",
+            lambda route: route.fulfill(
+                body=pages[route.request.url.rsplit("/", 1)[-1]],
+                content_type="text/html",
+            ),
+        )
+        page.goto("https://priorities.test/cpython")
+        page.get_by_label("Completion", exact=True).fill("3")
+        page.goto("https://priorities.test/sphinx")
+        assert page.get_by_label("Completion", exact=True).input_value() == "1"
+        assert (
+            page.get_by_label("Navigation proximity", exact=True).input_value() == "100"
+        )
+        page.get_by_label("Completion", exact=True).fill("7")
+        page.goto("https://priorities.test/cpython")
+        assert page.get_by_label("Completion", exact=True).input_value() == "3"
+        page.goto("https://priorities.test/sphinx")
+        assert page.get_by_label("Completion", exact=True).input_value() == "7"
+        browser.close()
+
+
+@pytest.mark.parametrize(
+    "storage", ["{broken", '{"completion":-1,"navigation":"bad"}', "blocked"]
+)
+def test_unusable_storage_keeps_tuning_available(tmp_path, storage):
+    items = _ranked_items(
+        (
+            HtmlItem(
+                "index",
+                "Index",
+                "https://example.test/",
+                HtmlMetrics(priority=50, completion=50, document_score=(0,)),
+            ),
+        ),
+        None,
+    )
+    path = tmp_path / "sphinx.html"
+    path.write_text(
+        render_html(HtmlSection("sphinx", "Sphinx", items), "Priorities"),
+        encoding="utf-8",
+    )
+    with playwright.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        if storage == "blocked":
+            page.add_init_script(
+                "Object.defineProperty(window, 'localStorage', {get() {throw new Error('Blocked');}})"
+            )
+        page.goto(path.as_uri())
+        if storage != "blocked":
+            page.evaluate(
+                "value => localStorage.setItem('potodo-docs-priority:weights:sphinx', value)",
+                storage,
+            )
+            page.reload()
+        assert page.get_by_label("Completion", exact=True).input_value() == "1"
+        assert (
+            page.get_by_label("Navigation proximity", exact=True).input_value() == "100"
+        )
+        page.get_by_label("Completion", exact=True).fill("3")
+        assert "Ranking updated" in page.get_by_role("status").inner_text()
         assert not errors
         browser.close()
 
@@ -120,8 +226,8 @@ def test_resource_expansion_follows_tuned_ranking(tmp_path, count):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(page_path.as_uri())
-        rows = page.locator("#resources > li")
-        visible = page.locator("#resources > li:visible")
+        rows = page.locator("#resources > tr")
+        visible = page.locator("#resources > tr:visible")
         toggle = page.locator("#show-more")
         assert rows.count() == count
         assert visible.count() == min(count, 15)
