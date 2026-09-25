@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .document_score import (
     catalog_scores,
-    score_cpython_documents,
     score_sphinx_documents,
 )
 
@@ -106,9 +105,7 @@ def resolve_source_root(project: Project, source: Path) -> Path:
     if project.name == "cpython" and source.name != "Doc":
         source /= "Doc"
     root_marker = (
-        source / "tools" / "templates" / "indexcontent.html"
-        if project.name == "cpython"
-        else source / "index.rst"
+        source / "contents.rst" if project.name == "cpython" else source / "index.rst"
     )
     if not root_marker.is_file():
         raise FileNotFoundError(f"documentation source root not found: {source}")
@@ -150,10 +147,10 @@ def calculate_document_scores(
 ) -> dict[PurePosixPath, DocumentScore]:
     """Calculate catalog scores directly from a documentation source tree."""
     doc_root = resolve_source_root(project, source)
-    if project.name == "cpython":
-        documents = score_cpython_documents(doc_root)
-    else:
-        documents = score_sphinx_documents(doc_root)
+    documents = score_sphinx_documents(
+        doc_root,
+        root_document="contents.rst" if project.name == "cpython" else "index.rst",
+    )
     catalogs = catalog_scores(
         documents,
         doc_root,

@@ -65,11 +65,10 @@ less central pages. If a Packaging translation has no localized Plausible
 prefix, translated popularity is omitted while original popularity remains in
 use.
 
-The navigation scorer is internal. CPython retains its custom
-`indexcontent.html` big-link ordering, and its shared `sphinx.po` template
-catalog is scored at the landing-page root and receives the main-page traffic;
-conventional projects start with `index.rst` and follow `toctree` and `include`
-directives. Use
+The navigation scorer is internal. CPython follows the order in
+`Doc/contents.rst`; other projects start with `index.rst`. All projects follow
+`toctree` and `include` directives. CPython's shared `sphinx.po` template
+catalog is scored at the landing-page root and receives the main-page traffic. Use
 `--stats-snapshots N`, `--docs-version VERSION` (CPython), or `--json` to adjust
 the report. Compatible precomputed navigation JSON can be supplied with
 `--document-scores` instead of `--source`.

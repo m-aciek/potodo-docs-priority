@@ -76,20 +76,11 @@ def _write_snapshot(stats_dir, site, date, prefix, rows):
 def _write_cpython_tree(tmp_path):
     cpython_root = tmp_path / "cpython"
     doc_root = cpython_root / "Doc"
-    templates = doc_root / "tools" / "templates"
     tutorial = doc_root / "tutorial"
-    include = cpython_root / "Include"
-    templates.mkdir(parents=True)
-    tutorial.mkdir()
-    include.mkdir()
-    (doc_root / "index.rst").write_text("Index\n=====\n", encoding="utf-8")
-    (include / "patchlevel.h").write_text(
-        "#define PY_MAJOR_VERSION 3\n#define PY_MINOR_VERSION 14\n",
-        encoding="utf-8",
-    )
-    (templates / "indexcontent.html").write_text(
-        '<a class="biglink" href="{{ pathto(\'tutorial/first\') }}">First</a>\n'
-        '<a class="biglink" href="{{ pathto(\'tutorial/second\') }}">Second</a>\n',
+    tutorial.mkdir(parents=True)
+    (doc_root / "contents.rst").write_text(
+        "Contents\n========\n\n.. toctree::\n\n"
+        "   tutorial/first.rst\n   Second <tutorial/second>\n",
         encoding="utf-8",
     )
     (tutorial / "first.rst").write_text("First\n=====\n", encoding="utf-8")
@@ -179,10 +170,33 @@ def test_positive_int():
         positive_int("0")
 
 
-def test_cpython_scores_preserve_custom_landing_page(tmp_path):
-    scores = calculate_document_scores(
-        PROJECTS["cpython"], _write_cpython_tree(tmp_path)
+@pytest.mark.parametrize("source_is_doc", [False, True])
+@pytest.mark.parametrize("with_template", [False, True])
+def test_cpython_scores_follow_contents(tmp_path, source_is_doc, with_template):
+    source = _write_cpython_tree(tmp_path)
+    doc_root = source / "Doc"
+    if with_template:
+        templates = doc_root / "tools" / "templates"
+        templates.mkdir(parents=True)
+        (templates / "indexcontent.html").write_text(
+            "{{ pathto('tutorial/second') }} {{ pathto('tutorial/first') }}",
+            encoding="utf-8",
+        )
+    (doc_root / "tutorial" / "first.rst").write_text(
+        "First\n=====\n\n.. toctree::\n\n   child\n\n.. include:: fragment.rst\n",
+        encoding="utf-8",
     )
+    for name in ("child", "fragment", "orphan"):
+        (doc_root / "tutorial" / f"{name}.rst").write_text(
+            f"{name}\n======\n", encoding="utf-8"
+        )
+    scores = calculate_document_scores(
+        PROJECTS["cpython"], doc_root if source_is_doc else source
+    )
+    assert scores[PurePosixPath("contents.pot")].score == (0,)
+    assert scores[PurePosixPath("tutorial/child.pot")].score == (2, 1, 1)
+    assert scores[PurePosixPath("tutorial/fragment.pot")].score == (2, 1, 2)
+    assert scores[PurePosixPath("tutorial/orphan.pot")].score == (3, 1)
     assert scores[PurePosixPath("tutorial/first.pot")].score == (1, 1)
     assert scores[PurePosixPath("tutorial/second.pot")].score == (1, 2)
     assert scores[PurePosixPath("sphinx.pot")].score == (0,)
