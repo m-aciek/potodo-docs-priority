@@ -164,8 +164,6 @@ def test_title_override_option_is_removed():
                 "site",
                 "--language",
                 "pl",
-                "--sphinx-language",
-                "pl_PL",
                 "--title-override",
                 "cpython:sphinx=templates",
             ]
@@ -256,7 +254,6 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
     sections = build_sections(
         projects=["packaging"],
         language="pl",
-        sphinx_language="pl_PL",
         plausible_stats=tmp_path,
         cpython_source=Path("unused"),
         cpython_translations=Path("unused"),
@@ -279,25 +276,24 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
     )
 
 
-def test_html_defaults_to_all_unfinished_resources(tmp_path):
-    args = parse_args(
-        ["--output", "site", "--language", "pl", "--sphinx-language", "pl_PL"]
-    )
+@pytest.mark.parametrize("language", ["pl", "de"])
+def test_html_defaults_to_all_unfinished_resources(tmp_path, language):
+    args = parse_args(["--output", "site", "--language", language])
     assert args.limit is None
     source = tmp_path / "source"
     source.mkdir()
     translations = tmp_path / "translations"
-    translations.mkdir()
+    messages = translations / language / "LC_MESSAGES"
+    messages.mkdir(parents=True)
     for index in range(13):
         name = "index" if index == 0 else f"page{index}"
         (source / f"{name}.rst").write_text("Title\n=====\n", encoding="utf-8")
         po = polib.POFile()
         po.append(polib.POEntry(msgid="Title", msgstr="Tytuł" if index == 12 else ""))
-        po.save(str(translations / f"{name}.po"))
+        po.save(str(messages / f"{name}.po"))
     sections = build_sections(
         projects=["sphinx"],
-        language="pl",
-        sphinx_language="pl_PL",
+        language=args.language,
         plausible_stats=tmp_path,
         cpython_source=tmp_path,
         cpython_translations=tmp_path,
@@ -309,6 +305,7 @@ def test_html_defaults_to_all_unfinished_resources(tmp_path):
         docs_version="3",
     )
     assert len(sections[0].items) == 12
+    assert all(f"/translate/#{language}/" in item.url for item in sections[0].items)
     assert "page12" not in {item.resource for item in sections[0].items}
     output = render_html(sections[0], "Priorities")
     assert output.count("<tr data-resource=") == 12
@@ -324,7 +321,6 @@ def test_packaging_section_explains_missing_translation_branch(tmp_path):
         build_sections(
             projects=["packaging"],
             language="pl",
-            sphinx_language="pl_PL",
             plausible_stats=tmp_path,
             cpython_source=Path("unused"),
             cpython_translations=Path("unused"),

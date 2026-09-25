@@ -23,8 +23,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output", type=Path, required=True, help="directory for generated pages"
     )
     parser.add_argument("--title", default="Documentation translation priorities")
-    parser.add_argument("--language", required=True, help="CPython/Packaging locale")
-    parser.add_argument("--sphinx-language", required=True, help="Sphinx locale")
+    parser.add_argument(
+        "--language", required=True, help="gettext locale name for all projects"
+    )
     parser.add_argument(
         "--projects", nargs="+", choices=PROJECTS, default=list(PROJECTS)
     )
@@ -85,7 +86,6 @@ def main() -> None:
     sections = build_sections(
         projects=args.projects,
         language=args.language,
-        sphinx_language=args.sphinx_language,
         plausible_stats=args.plausible_stats,
         cpython_source=args.cpython_source,
         cpython_translations=args.cpython_translations,

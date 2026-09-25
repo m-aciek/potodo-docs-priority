@@ -56,7 +56,7 @@ jobs:
           path: sources/sphinx-doc-translations
           sparse-checkout: |
             locales/.tx
-            locales/pl_PL
+            locales/pl
           sparse-checkout-cone-mode: false
 
       - name: Check out Packaging documentation
@@ -101,7 +101,6 @@ jobs:
         run: |
           potodo-docs-priority-html \
             --language pl \
-            --sphinx-language pl_PL \
             --plausible-stats sources/plausible-stats \
             --cpython-source sources/cpython \
             --cpython-translations sources/python-docs-pl \

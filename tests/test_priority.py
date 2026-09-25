@@ -302,9 +302,9 @@ def test_sphinx_cli_uses_completion_and_distance_without_stats(
 ):
     source = _write_sphinx_tree(tmp_path)
     locales = tmp_path / "locales"
-    _write_po(locales / "pl_PL" / "LC_MESSAGES" / "index.po", translated=False)
-    _write_po(locales / "pl_PL" / "LC_MESSAGES" / "first.po")
-    _write_po(locales / "pl_PL" / "LC_MESSAGES" / "second.po", translated=False)
+    _write_po(locales / "pl" / "LC_MESSAGES" / "index.po", translated=False)
+    _write_po(locales / "pl" / "LC_MESSAGES" / "first.po")
+    _write_po(locales / "pl" / "LC_MESSAGES" / "second.po", translated=False)
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -316,7 +316,7 @@ def test_sphinx_cli_uses_completion_and_distance_without_stats(
             "--source",
             str(source),
             "--language",
-            "pl_PL",
+            "pl",
         ],
     )
     main()

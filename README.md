@@ -22,7 +22,7 @@ potodo-docs-priority ../python-docs-pl \
 potodo-docs-priority ../sphinx-doc-translations/locales \
   --project sphinx \
   --source ../sphinx/doc \
-  --language pl_PL
+  --language pl
 
 # Packaging: run from a checkout containing translation/source's locales/.
 potodo-docs-priority ../packaging.python.org/locales \
@@ -87,7 +87,6 @@ pip install 'potodo-docs-priority[html]'
 
 potodo-docs-priority-html \
   --language pl \
-  --sphinx-language pl_PL \
   --output priorities
 ```
 
