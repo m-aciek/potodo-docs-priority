@@ -79,11 +79,11 @@ translation repository uses `--pot ../sphinx-doc-translations/locales/pot`.
 
 ## Linked HTML report
 
-Install the optional checksum dependency and build pages containing all
-unfinished resources for each project in priority order:
+Build pages containing all unfinished resources for each project in priority
+order:
 
 ```sh
-pip install 'potodo-docs-priority[html]'
+pip install potodo-docs-priority
 
 potodo-docs-priority-html \
   --language pl \
@@ -99,12 +99,12 @@ Use `--limit N` to restrict each project to its N highest-priority resources.
 Packaging requires `../packaging.python.org/locales` from its
 `translation/source` branch.
 
-CPython uses exact Transifex resource names from `.tx/config`, Sphinx derives
-its Transifex names from catalog paths, and Packaging's compact catalog is
-split by source-document occurrences. Packaging links use Weblate's unit
-checksums and point at the document heading when available. Document headings
-are translated when the PO contains a translation. Weblate's unfinished-state
-filter is omitted when the linked heading is already translated.
+For CPython languages using Transifex, resource links use exact names from
+`.tx/config`; Sphinx derives its Transifex names from catalog paths.
+Other CPython translations and Packaging display resource names as plain text.
+Packaging's compact catalog is split by source-document occurrences.
+Document headings are translated when the PO contains a translation.
+Links to rendered documentation remain available for all projects.
 
 The output directory uses the CPython report as `index.html` and creates
 `packaging.html` and `sphinx.html` for the other selected projects. If CPython
@@ -125,10 +125,34 @@ their percentile ranks still come from the full set of unfinished resources.
 Weights and the core-resource boost are saved in the browser's local storage,
 separately for each project, and restored on reload. Reset also saves the defaults.
 
-The included GitHub Pages workflow rebuilds this Polish report every day at
-03:17 UTC, on pushes to `main`, and on manual runs. After pushing the project
-to GitHub, select **GitHub Actions** as the Pages build and deployment source
-in the repository settings.
+The included GitHub Pages workflow rebuilds reports for every language in the
+devguide's translation table every day at 03:17 UTC, on pushes to `main`, and
+on manual runs. Like `dashboard`, it reads each language's
+CPython repository from the devguide and selects the newest available supported
+release branch, falling back to `master` and `main`. It adds Sphinx and Packaging
+reports wherever those projects have catalogs for the language, accounting for
+gettext locale names such as `pt_BR` and `zh_Hans`.
+
+The site root lists languages; each language has its own directory, for example
+`pl/index.html`, `pl/sphinx.html`, and `pl/packaging.html`. Languages without
+available catalogs remain listed. Invalid upstream PO syntax marks the affected
+project report as unavailable while the other reports continue to build.
+Resource links are enabled only for Transifex
+projects, using the dashboard's CPython language list plus languages explicitly
+marked as using Transifex in the devguide.
+
+To run the same builder locally with the workflow's `sources/` layout:
+
+```sh
+pip install 'potodo-docs-priority[pages]'
+potodo-docs-priority-pages --devguide ../devguide --sources sources --output _site
+# Optionally build only selected languages:
+potodo-docs-priority-pages --devguide ../devguide --sources sources \\
+  --languages pl fr pt-br --output _site
+```
+
+After pushing the project to GitHub, select **GitHub Actions** as the Pages
+build and deployment source in the repository settings.
 
 ## Development
 

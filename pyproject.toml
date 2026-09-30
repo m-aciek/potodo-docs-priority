@@ -21,10 +21,12 @@ classifiers = [
 [project.scripts]
 potodo-docs-priority = "potodo_docs_priority.cli:main"
 potodo-docs-priority-html = "potodo_docs_priority.html_cli:main"
+potodo-docs-priority-pages = "potodo_docs_priority.pages:main"
 
 [project.optional-dependencies]
 dev = [
     "black",
+    "docutils",
     "isort",
     "mypy",
     "pylint",
@@ -32,6 +34,7 @@ dev = [
     "siphashc>=2",
 ]
 html = ["siphashc>=2"]
+pages = ["docutils"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

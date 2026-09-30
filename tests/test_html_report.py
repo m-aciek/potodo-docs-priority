@@ -269,11 +269,67 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
     assert [item.resource for item in sections[0].items] == expected
     assert sections[0].items[0].metrics.ranks["original_popularity"] == 1
     assert sections[0].items[1].title == "Przegląd pakowania w Pythonie"
-    assert (
-        sections[0]
-        .items[1]
-        .url.endswith("?checksum=" + weblate_checksum("Overview of Python Packaging"))
+    assert all(item.url is None for item in sections[0].items)
+    output = render_html(sections[0], "Priorities")
+    assert "hosted.weblate.org" not in output
+    assert 'class="documentation-link"' in output
+
+
+def test_unlinked_resource_is_escaped_and_keeps_documentation_link():
+    item = HtmlItem(
+        resource="guide<&>",
+        title="Guide",
+        url=None,
+        documentation_url="https://docs.example.test/guide",
+        metrics=HtmlMetrics(priority=50, completion=25),
     )
+    output = render_html(HtmlSection("cpython", "Docs", (item,)), "Priorities")
+    assert '<th scope="row">guide&lt;&amp;&gt; <a class="documentation-link"' in output
+    assert 'href="None"' not in output
+
+
+@pytest.mark.parametrize(
+    "language,linked", [("pl", True), ("fr", False), ("es", False)]
+)
+def test_cpython_links_only_transifex_languages(tmp_path, language, linked):
+    source = tmp_path / "Doc"
+    source.mkdir()
+    (source / "contents.rst").write_text("Docs\n====\n\n.. toctree::\n\n   glossary\n")
+    (source / "glossary.rst").write_text("Glossary\n========\n")
+    translations = tmp_path / "translations"
+    translations.mkdir()
+    (translations / "glossary.po").write_text('msgid "Glossary"\nmsgstr ""\n')
+    # Even a leftover Transifex config in a non-Transifex repo must not enable links.
+    config = translations / ".tx" / "config"
+    config.parent.mkdir()
+    config.write_text(
+        "[o:python-doc:p:python-newest:r:glossary_]\n"
+        "file_filter = glossary.po\nresource_name = glossary_\n"
+    )
+    _write_snapshot(
+        tmp_path,
+        "docs.python.org",
+        "3",
+        [{"name": "/3/glossary.html", "visitors": "5"}],
+    )
+    section = build_sections(
+        projects=["cpython"],
+        language=language,
+        plausible_stats=tmp_path,
+        cpython_source=source,
+        cpython_translations=translations,
+        packaging_source=tmp_path,
+        packaging_translations=tmp_path,
+        sphinx_source=tmp_path,
+        sphinx_translations=tmp_path,
+        snapshots=30,
+        docs_version="3",
+    )[0]
+    assert len(section.items) == 1
+    assert bool(section.items[0].url) is linked
+    if linked:
+        assert section.items[0].url.endswith(f"#{language}/glossary_")
+    assert ("app.transifex.com" in render_html(section, "Priorities")) is linked
 
 
 @pytest.mark.parametrize("language", ["pl", "de"])

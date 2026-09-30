@@ -18,6 +18,7 @@ from potodo.po_file import PoDirectories, PoDirectory
 
 from .document_score import score_sphinx_documents
 from .html_tuning import TUNING_SCRIPT
+from .languages import CPYTHON_TRANSIFEX_LANGUAGES
 from .priority import (
     CORE_RESOURCE_BOOST,
     PROJECTS,
@@ -59,7 +60,7 @@ class HtmlItem:
 
     resource: str
     title: str
-    url: str
+    url: str | None
     metrics: HtmlMetrics
     documentation_url: str | None = None
 
@@ -71,6 +72,7 @@ class HtmlSection:
     project: str
     title: str
     items: tuple[HtmlItem, ...]
+    notice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,11 @@ def transifex_url(project: str, language: str, resource: str) -> str:
         "cpython": ("python-doc", "python-newest"),
         "sphinx": ("sphinx-doc", "sphinx-doc"),
     }[project]
+    language = {
+        "pt-br": "pt_BR",
+        "zh-cn": "zh_CN",
+        "zh-tw": "zh_TW",
+    }.get(normalize_language(language), language)
     return (
         f"https://app.transifex.com/{organization}/{tx_project}/translate/"
         f"#{quote(language, safe='_')}/{quote(resource, safe='-_')}"
@@ -226,6 +233,7 @@ def _standard_items(
     snapshots: int,
     docs_version: str,
     limit: int | None,
+    transifex: bool,
 ) -> tuple[HtmlItem, ...]:
     project = PROJECTS[project_name]
     paths = resolve_translation_paths(project, [translations], language)
@@ -245,7 +253,7 @@ def _standard_items(
         show_finished=False,
     )
     source_root = resolve_source_root(project, source)
-    tx_resources = transifex_resources(translations)
+    tx_resources = transifex_resources(translations) if transifex else {}
     items = []
     for row in rows:
         resource = row.resource.removesuffix(".po")
@@ -263,7 +271,11 @@ def _standard_items(
             HtmlItem(
                 resource=resource,
                 title=title,
-                url=transifex_url(project_name, language, tx_resource),
+                url=(
+                    transifex_url(project_name, language, tx_resource)
+                    if transifex
+                    else None
+                ),
                 metrics=HtmlMetrics(
                     priority=row.priority,
                     completion=row.completion,
@@ -436,7 +448,7 @@ def _packaging_items(
             HtmlItem(
                 resource=resource,
                 title=candidate.title,
-                url=weblate_url(language, candidate.entry),
+                url=None,
                 metrics=HtmlMetrics(
                     priority=priority,
                     completion=candidate.completion,
@@ -493,6 +505,7 @@ def build_sections(
     snapshots: int,
     docs_version: str,
     limit: int | None = None,
+    cpython_transifex: bool | None = None,
 ) -> tuple[HtmlSection, ...]:
     """Rank requested projects and return renderable report sections."""
     sections = []
@@ -510,6 +523,11 @@ def build_sections(
                     snapshots,
                     docs_version,
                     limit,
+                    (
+                        normalize_language(language) in CPYTHON_TRANSIFEX_LANGUAGES
+                        if cpython_transifex is None
+                        else cpython_transifex
+                    ),
                 ),
             )
         )
@@ -542,6 +560,7 @@ def build_sections(
                     snapshots,
                     docs_version,
                     limit,
+                    True,
                 ),
             )
         )
@@ -592,6 +611,8 @@ def render_html(
     section: HtmlSection,
     site_title: str,
     sections: Sequence[HtmlSection] = (),
+    *,
+    language_index: str | None = None,
 ) -> str:
     """Render one project's complete, dependency-free HTML page."""
     page_title = f"{section.title} – {site_title}"
@@ -636,8 +657,18 @@ def render_html(
         "<body>",
         f"  <h1>{html.escape(section.title)}</h1>",
     ]
+    if language_index:
+        navigation = (
+            f'<a href="{html.escape(language_index, quote=True)}">Languages</a>'
+            + (f" | {navigation}" if navigation else "")
+        )
     if navigation:
         lines.append(f"  <nav>{navigation}</nav>")
+    if section.notice:
+        lines.extend(
+            (f"<p>{html.escape(section.notice)}</p>", "</body>", "</html>", "")
+        )
+        return "\n".join(lines)
     lines.append(_weight_controls(section))
     lines.extend(
         (
@@ -669,11 +700,15 @@ def render_html(
             if item.documentation_url
             else ""
         )
+        resource_label = (
+            f'<a href="{html.escape(item.url, quote=True)}">{resource}</a>'
+            if item.url
+            else resource
+        )
         lines.append(
             f'    <tr data-resource="{resource}" data-ranks="{ranks}" '
             f'data-core="{core}" data-priority="{item.metrics.priority}">'
-            f'<th scope="row"><a href="{html.escape(item.url, quote=True)}">'
-            f"{html.escape(item.resource)}</a>"
+            f'<th scope="row">{resource_label}'
             f'{docs_link}<span class="resource-title">{html.escape(item.title)}</span>{badge}</th>'
             f'<td class="priority">{item.metrics.priority:.2f}</td>'
         )
@@ -715,7 +750,9 @@ def _metric_background(item: HtmlItem, name: str) -> str:
     )
 
 
-def render_index(sections: Sequence[HtmlSection], title: str) -> str:
+def render_index(
+    sections: Sequence[HtmlSection], title: str, *, language_index: str | None = None
+) -> str:
     """Render an index linking the generated project pages."""
     lines = [
         "<!doctype html>",
@@ -729,6 +766,13 @@ def render_index(sections: Sequence[HtmlSection], title: str) -> str:
         f"  <h1>{html.escape(title)}</h1>",
         "  <ul>",
     ]
+    if language_index:
+        lines.insert(
+            -1,
+            f'<nav><a href="{html.escape(language_index, quote=True)}">Languages</a></nav>',
+        )
+    if not sections:
+        lines.insert(-1, "<p>No translation catalogs available for this language.</p>")
     for section in sections:
         lines.append(
             f'    <li><a href="{html.escape(project_filename(section.project), quote=True)}">'

@@ -33,12 +33,13 @@ jobs:
             Doc
             Include
 
-      - name: Check out Polish CPython translations
+      - name: Check out translation language declarations
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          repository: python/python-docs-pl
-          path: sources/python-docs-pl
+          repository: python/devguide
+          path: sources/devguide
+          sparse-checkout: documentation/translations
 
       - name: Check out Sphinx documentation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -48,16 +49,13 @@ jobs:
           path: sources/sphinx
           sparse-checkout: doc
 
-      - name: Check out Polish Sphinx translations
+      - name: Check out Sphinx translations
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: sphinx-doc/sphinx-doc-translations
           path: sources/sphinx-doc-translations
-          sparse-checkout: |
-            locales/.tx
-            locales/pl
-          sparse-checkout-cone-mode: false
+          sparse-checkout: locales
 
       - name: Check out Packaging documentation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -67,14 +65,14 @@ jobs:
           path: sources/packaging
           sparse-checkout: source
 
-      - name: Check out Polish Packaging translations
+      - name: Check out Packaging translations
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: pypa/packaging.python.org
           ref: translation/source
           path: sources/packaging-translations
-          sparse-checkout: locales/pl
+          sparse-checkout: locales
 
       - name: Check out Plausible statistics
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -95,19 +93,13 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install the HTML report utility
-        run: python -m pip install '.[html]'
+        run: python -m pip install '.[pages]'
 
       - name: Build the site
         run: |
-          potodo-docs-priority-html \
-            --language pl \
-            --plausible-stats sources/plausible-stats \
-            --cpython-source sources/cpython \
-            --cpython-translations sources/python-docs-pl \
-            --packaging-source sources/packaging/source \
-            --packaging-translations sources/packaging-translations/locales \
-            --sphinx-source sources/sphinx/doc \
-            --sphinx-translations sources/sphinx-doc-translations/locales \
+          potodo-docs-priority-pages \
+            --devguide sources/devguide \
+            --sources sources \
             --output _site
 
       - name: Upload Pages artifact

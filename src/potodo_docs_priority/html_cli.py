@@ -63,7 +63,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def write_pages(
-    output: Path, sections: Sequence[HtmlSection], title: str
+    output: Path,
+    sections: Sequence[HtmlSection],
+    title: str,
+    *,
+    language_index: str | None = None,
 ) -> tuple[Path, ...]:
     """Write a landing page and one page for every requested project."""
     output = output.resolve()
@@ -71,11 +75,17 @@ def write_pages(
     paths = []
     if not any(section.project == "cpython" for section in sections):
         index = output / "index.html"
-        index.write_text(render_index(sections, title), encoding="utf-8")
+        index.write_text(
+            render_index(sections, title, language_index=language_index),
+            encoding="utf-8",
+        )
         paths.append(index)
     for section in sections:
         path = output / project_filename(section.project)
-        path.write_text(render_html(section, title, sections), encoding="utf-8")
+        path.write_text(
+            render_html(section, title, sections, language_index=language_index),
+            encoding="utf-8",
+        )
         paths.append(path)
     return tuple(paths)
 
