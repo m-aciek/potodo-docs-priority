@@ -13,6 +13,10 @@ TUNING_SCRIPT = """
   const storageKey = `potodo-docs-priority:weights:${form.dataset.project}`;
   const inputKey = input => input.dataset.metric ?? 'core_boost';
   const toggle = document.querySelector('#show-more');
+  const completedFilter = document.querySelector('#completed-filter');
+  const showCompleted = document.querySelector('#show-completed');
+  const resourceLimit = tableBody.dataset.limit === '' ? Infinity :
+    Number(tableBody.dataset.limit);
   const visibleLimit = 15;
   let expanded = false;
   const rows = [...tableBody.children].map((element, initialIndex) => ({
@@ -21,19 +25,25 @@ TUNING_SCRIPT = """
     resource: element.dataset.resource,
     ranks: JSON.parse(element.dataset.ranks),
     core: element.dataset.core === 'true',
+    completed: element.dataset.completed === 'true',
     priority: Number(element.dataset.priority),
     initialPriority: Number(element.dataset.priority),
     score: element.querySelector('.priority'),
   }));
   function updateVisibility() {
-    rows.forEach((row, index) => {
-      row.element.hidden = !expanded && index >= visibleLimit;
-    });
-    toggle.hidden = rows.length <= visibleLimit;
+    const matching = rows.filter(row => showCompleted.checked || !row.completed);
+    const included = matching.slice(0, resourceLimit);
+    const visible = new Set(expanded ? included : included.slice(0, visibleLimit));
+    for (const row of rows) row.element.hidden = !visible.has(row);
+    toggle.hidden = included.length <= visibleLimit;
     toggle.setAttribute('aria-expanded', String(expanded));
     toggle.textContent = expanded ? `Show first ${visibleLimit}` :
-      `Show all (${rows.length})`;
+      `Show all (${included.length})`;
+    status.textContent = `${matching.length} ` +
+      (showCompleted.checked ? 'resources.' : 'unfinished resources.');
   }
+  completedFilter.hidden = false;
+  showCompleted.addEventListener('change', updateVisibility);
   toggle.addEventListener('click', () => {
     expanded = !expanded;
     updateVisibility();
@@ -73,7 +83,7 @@ TUNING_SCRIPT = """
     for (const row of rows) fragment.append(row.element);
     tableBody.append(fragment);
     updateVisibility();
-    status.textContent = `${rows.length} unfinished resources. ` +
+    status.textContent += ' ' +
       (Object.values(weights).some(weight => weight > 0)
         ? 'Ranking updated.' : 'All metric weights are zero; only the core boost applies.');
     try {

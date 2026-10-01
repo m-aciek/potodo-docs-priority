@@ -116,6 +116,97 @@ def test_weight_tuning_reorders_table_and_resets(tmp_path):
         browser.close()
 
 
+@pytest.mark.parametrize(
+    "unfinished,completed,limit",
+    [(16, 3, None), (14, 3, None), (0, 3, None), (16, 3, 2)],
+)
+def test_completed_filter_works_with_expansion_weights_and_limit(
+    tmp_path, unfinished, completed, limit
+):
+    items = [
+        HtmlItem(
+            f"completed{index}",
+            "Completed",
+            "https://example.test/",
+            HtmlMetrics(priority=100 - index, completion=100, document_score=(index,)),
+        )
+        for index in range(completed)
+    ] + [
+        HtmlItem(
+            f"pending{index:02}",
+            "Pending",
+            "https://example.test/",
+            HtmlMetrics(
+                priority=80 - index, completion=50, document_score=(index + completed,)
+            ),
+        )
+        for index in range(unfinished)
+    ]
+    path = tmp_path / "sphinx.html"
+    path.write_text(
+        render_html(
+            HtmlSection("sphinx", "Sphinx", _ranked_items(items, None), limit=limit),
+            "Priorities",
+        ),
+        encoding="utf-8",
+    )
+    with playwright.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(path.as_uri())
+        visible = page.locator("#resources > tr:visible")
+        toggle = page.locator("#show-more")
+        checkbox = page.get_by_label("Show completed resources", exact=True)
+        cap = limit or len(items)
+        assert not checkbox.is_checked()
+        assert visible.count() == min(15, cap, unfinished)
+        assert (
+            page.locator('#resources > tr[data-completed="true"]:visible').count() == 0
+        )
+        assert (
+            page.get_by_role("status").inner_text()
+            == f"{unfinished} unfinished resources."
+        )
+
+        checkbox.check()
+        assert visible.count() == min(15, cap, len(items))
+        assert visible.first.get_attribute("data-resource") == "completed0"
+        assert page.get_by_role("status").inner_text() == f"{len(items)} resources."
+        if min(cap, len(items)) > 15:
+            assert toggle.inner_text() == f"Show all ({len(items)})"
+            toggle.click()
+        else:
+            assert toggle.is_hidden()
+        assert visible.count() == min(cap, len(items))
+
+        checkbox.uncheck()
+        assert visible.count() == min(cap, unfinished)
+        assert (
+            page.locator('#resources > tr[data-completed="true"]:visible').count() == 0
+        )
+        if unfinished <= 15 or cap <= 15:
+            assert toggle.is_hidden()
+        else:
+            toggle.click()
+            assert visible.count() == 15
+            assert toggle.inner_text() == f"Show all ({unfinished})"
+
+        page.get_by_label("Completion", exact=True).fill("0")
+        page.get_by_label("Navigation proximity", exact=True).fill("0")
+        assert (
+            page.locator('#resources > tr[data-completed="true"]:visible').count() == 0
+        )
+        checkbox.check()
+        assert visible.first.get_attribute("data-resource") == "completed0"
+        page.get_by_role("button", name="Reset weights").click()
+        assert checkbox.is_checked()
+        assert visible.first.get_attribute("data-resource") == "completed0"
+        assert not errors
+        browser.close()
+
+
 def test_saved_weights_are_separate_for_each_project():
     items = _ranked_items(
         (

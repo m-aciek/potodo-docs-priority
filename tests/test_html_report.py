@@ -209,7 +209,10 @@ def test_table_links_to_rendered_documentation():
 
 
 @pytest.mark.parametrize("limit", [None, 2])
-def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
+@pytest.mark.parametrize("finished_msgid", ["Finished", "Completed body"])
+def test_packaging_section_splits_compact_catalog_by_document(
+    tmp_path, limit, finished_msgid
+):
     source = tmp_path / "source"
     source.mkdir()
     (source / "index.rst").write_text(
@@ -232,7 +235,7 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
         'msgstr "Przegląd pakowania w Pythonie"\n\n'
         '#: ../source/overview.rst:3\nmsgid "Translate this overview"\nmsgstr ""\n\n'
         '#: ../source/flow.rst:1\nmsgid "The Packaging Flow"\nmsgstr ""\n\n'
-        '#: ../source/finished.rst:1\nmsgid "Finished"\nmsgstr "Gotowe"\n',
+        f'#: ../source/finished.rst:1\nmsgid "{finished_msgid}"\nmsgstr "Gotowe"\n',
         encoding="utf-8",
     )
     _write_snapshot(
@@ -265,12 +268,17 @@ def test_packaging_section_splits_compact_catalog_by_document(tmp_path, limit):
         docs_version="3",
         limit=limit,
     )
-    expected = ["index", "overview", "flow"][:limit]
+    expected = ["index", "overview", "flow", "finished"]
     assert [item.resource for item in sections[0].items] == expected
+    assert sections[0].limit == limit
+    assert sections[0].items[-1].metrics.completion == 100
     assert sections[0].items[0].metrics.ranks["original_popularity"] == 1
     assert sections[0].items[1].title == "Przegląd pakowania w Pythonie"
     assert all(item.url is None for item in sections[0].items)
     output = render_html(sections[0], "Priorities")
+    rows = [line for line in output.splitlines() if "<tr data-resource=" in line]
+    assert 'data-completed="true" hidden>' in rows[-1]
+    assert sum(" hidden>" not in row for row in rows) == (limit or 3)
     assert "hosted.weblate.org" not in output
     assert 'class="documentation-link"' in output
 
@@ -360,11 +368,17 @@ def test_html_defaults_to_all_unfinished_resources(tmp_path, language):
         snapshots=30,
         docs_version="3",
     )
-    assert len(sections[0].items) == 12
+    assert len(sections[0].items) == 13
     assert all(f"/translate/#{language}/" in item.url for item in sections[0].items)
-    assert "page12" not in {item.resource for item in sections[0].items}
+    finished = next(item for item in sections[0].items if item.resource == "page12")
+    assert finished.metrics.completion == 100
     output = render_html(sections[0], "Priorities")
-    assert output.count("<tr data-resource=") == 12
+    rows = [line for line in output.splitlines() if "<tr data-resource=" in line]
+    assert len(rows) == 13
+    assert sum(" hidden>" not in row for row in rows) == 12
+    assert 'data-completed="true" hidden>' in next(
+        row for row in rows if 'data-resource="page12"' in row
+    )
     assert 'data-metric="navigation" min="0" step="any" required value="100"' in output
     assert 'data-metric="original_popularity"' not in output
 

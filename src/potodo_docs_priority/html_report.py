@@ -73,6 +73,7 @@ class HtmlSection:
     title: str
     items: tuple[HtmlItem, ...]
     notice: str | None = None
+    limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -232,7 +233,6 @@ def _standard_items(
     stats: Path | None,
     snapshots: int,
     docs_version: str,
-    limit: int | None,
     transifex: bool,
 ) -> tuple[HtmlItem, ...]:
     project = PROJECTS[project_name]
@@ -250,7 +250,7 @@ def _standard_items(
         project=project,
         language=language,
         docs_version=docs_version,
-        show_finished=False,
+        show_finished=True,
     )
     source_root = resolve_source_root(project, source)
     tx_resources = transifex_resources(translations) if transifex else {}
@@ -296,7 +296,7 @@ def _standard_items(
                 ),
             )
         )
-    return _ranked_items(items, limit)
+    return _ranked_items(items, None)
 
 
 def _occurrence_document(path: str) -> PurePosixPath | None:
@@ -357,15 +357,13 @@ def _packaging_candidates(
             len(entry.msgid.split()) for entry in entries if entry.translated()
         )
         completion = 100 * translated_words / words if words else 0
-        if completion == 100:
-            continue
         title = rst_title(source_path)
         title_entry = next(
             (entry for entry in entries if entry.msgid.casefold() == title.casefold()),
             None,
         )
         link_entry = title_entry or next(
-            entry for entry in entries if not entry.translated()
+            (entry for entry in entries if not entry.translated()), entries[0]
         )
         candidates.append(
             _PackagingCandidate(
@@ -397,7 +395,6 @@ def _packaging_items(
     language: str,
     stats: Path,
     snapshots: int,
-    limit: int | None,
 ) -> tuple[HtmlItem, ...]:
     candidates = _packaging_candidates(source, translations, language, stats, snapshots)
     if not candidates:
@@ -461,7 +458,7 @@ def _packaging_items(
                 ),
             )
         )
-    return _ranked_items(items, limit)
+    return _ranked_items(items, None)
 
 
 METRICS = {
@@ -522,13 +519,13 @@ def build_sections(
                     plausible_stats,
                     snapshots,
                     docs_version,
-                    limit,
                     (
                         normalize_language(language) in CPYTHON_TRANSIFEX_LANGUAGES
                         if cpython_transifex is None
                         else cpython_transifex
                     ),
                 ),
+                limit=limit,
             )
         )
     if "packaging" in projects:
@@ -542,8 +539,8 @@ def build_sections(
                     language,
                     plausible_stats,
                     snapshots,
-                    limit,
                 ),
+                limit=limit,
             )
         )
     if "sphinx" in projects:
@@ -559,9 +556,9 @@ def build_sections(
                     None,
                     snapshots,
                     docs_version,
-                    limit,
                     True,
                 ),
+                limit=limit,
             )
         )
     return tuple(sections)
@@ -601,7 +598,8 @@ def _weight_controls(section: HtmlSection) -> str:
         )
     lines.append(
         '<button type="reset">Reset weights</button></fieldset>'
-        f'<p id="tuning-status" role="status">{len(section.items)} unfinished '
+        f'<p id="tuning-status" role="status">'
+        f"{sum(item.metrics.completion != 100 for item in section.items)} unfinished "
         "resources.</p></form>"
     )
     return "\n".join(lines)
@@ -670,6 +668,10 @@ def render_html(
         )
         return "\n".join(lines)
     lines.append(_weight_controls(section))
+    lines.append(
+        '<label id="completed-filter" hidden><input id="show-completed" '
+        'type="checkbox" aria-controls="resources"> Show completed resources</label>'
+    )
     lines.extend(
         (
             '<div class="table-scroll" tabindex="0" role="region" '
@@ -684,11 +686,22 @@ def render_html(
     lines.extend(
         f'<th class="metric-column" scope="col">{label}</th>' for _, label, _ in columns
     )
-    lines.append('</tr></thead><tbody id="resources">')
+    limit = str(section.limit) if section.limit is not None else ""
+    lines.append(f'</tr></thead><tbody id="resources" data-limit="{limit}">')
+    unfinished_count = 0
     for item in section.items:
         ranks = html.escape(json.dumps(item.metrics.ranks), quote=True)
         resource = html.escape(item.resource, quote=True)
         core = str(item.metrics.core_boost > 0).lower()
+        completed = item.metrics.completion == 100
+        if not completed:
+            unfinished_count += 1
+        hidden = (
+            " hidden"
+            if completed
+            or (section.limit is not None and unfinished_count > section.limit)
+            else ""
+        )
         badge = (
             '<span class="core-resource">Core resource</span> '
             if core == "true"
@@ -707,7 +720,8 @@ def render_html(
         )
         lines.append(
             f'    <tr data-resource="{resource}" data-ranks="{ranks}" '
-            f'data-core="{core}" data-priority="{item.metrics.priority}">'
+            f'data-core="{core}" data-priority="{item.metrics.priority}" '
+            f'data-completed="{str(completed).lower()}"{hidden}>'
             f'<th scope="row">{resource_label}'
             f'{docs_link}<span class="resource-title">{html.escape(item.title)}</span>{badge}</th>'
             f'<td class="priority">{item.metrics.priority:.2f}</td>'

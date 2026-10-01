@@ -79,8 +79,7 @@ translation repository uses `--pot ../sphinx-doc-translations/locales/pot`.
 
 ## Linked HTML report
 
-Build pages containing all unfinished resources for each project in priority
-order:
+Build pages listing resources for each project in priority order:
 
 ```sh
 pip install potodo-docs-priority
@@ -92,10 +91,13 @@ potodo-docs-priority-html \
 
 The default paths match sibling checkouts under `~/projects`; every source,
 translation, and stats path also has a corresponding command-line option.
-The page initially shows the top 15 resources. **Show all** reveals the rest;
+The page initially shows the top 15 unfinished resources. Enable **Show completed
+resources** to include resources that are 100% translated.
+**Show all** reveals the rest;
 **Show first 15** collapses the list again. Weight changes rank all included
 resources, so hidden resources can move into the visible top 15.
-Use `--limit N` to restrict each project to its N highest-priority resources.
+Use `--limit N` to restrict each project to its N highest-priority resources
+matching the selected filter.
 Packaging requires `../packaging.python.org/locales` from its
 `translation/source` branch.
 
@@ -120,8 +122,9 @@ The HTML weight controls recalculate scores and reorder resources immediately.
 Each available metric has a non-negative weight; zero disables that metric.
 CPython also has an adjustable core-resource boost. With every metric disabled,
 only the boost contributes, and ties are ordered by resource name. Reset restores
-the project's defaults. Tuning applies to all included resources; with `--limit`,
-their percentile ranks still come from the full set of unfinished resources.
+the project's defaults. Tuning applies to all resources, including completed
+ones; filtering and `--limit` select which resources to display without changing
+their scores or percentile ranks.
 Weights and the core-resource boost are saved in the browser's local storage,
 separately for each project, and restored on reload. Reset also saves the defaults.
 
