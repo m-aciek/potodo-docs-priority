@@ -6,6 +6,7 @@ import re
 from bisect import bisect_right
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
+from string import punctuation
 from typing import Mapping, Sequence
 from urllib.error import HTTPError
 from urllib.parse import quote
@@ -71,6 +72,33 @@ def _occurrence_document(filename: str) -> PurePosixPath:
     return PurePosixPath(filename.removeprefix("Doc/"))
 
 
+def _heading_locations(text: str) -> dict[int, str]:
+    """Map unindented RST heading adornments to normalized title text."""
+    lines = text.splitlines()
+    headings = {}
+    for index, (title, underline) in enumerate(zip(lines, lines[1:])):
+        title = title.rstrip()
+        underline = underline.rstrip()
+        if (
+            not title
+            or title[0].isspace()
+            or len(underline) < len(title)
+            or underline[0] not in punctuation
+            or len(set(underline)) != 1
+        ):
+            continue
+        first = index
+        if index and lines[index - 1].strip():
+            # An overline must match the underline. Other preceding text
+            # means this is not a section heading.
+            if lines[index - 1].rstrip() != underline:
+                continue
+            first -= 1
+        for line in range(first + 1, index + 3):
+            headings[line] = " ".join(title.split())
+    return headings
+
+
 def _source_messages(
     catalog: polib.POFile,
     source: Path,
@@ -78,12 +106,17 @@ def _source_messages(
     warning_lines: frozenset[int],
 ) -> set[str]:
     text = source.read_text(encoding="utf-8")
+    headings = _heading_locations(text)
     line_starts = [0] + [match.end() for match in re.finditer("\n", text)]
     matches: defaultdict[int, list[str]] = defaultdict(list)
     occurrences: defaultdict[int, list[str]] = defaultdict(list)
     for entry in catalog:
         if not entry.msgid.strip() or entry.obsolete:
             continue
+        normalized = " ".join(entry.msgid.split())
+        for line in warning_lines:
+            if headings.get(line) == normalized:
+                matches[line].append(entry.msgid)
         for filename, line in entry.occurrences:
             if _occurrence_document(filename) == document and (
                 line.isdigit() and int(line) in warning_lines
@@ -116,8 +149,10 @@ def catalog_messages(
 ) -> frozenset[str]:
     """Find warned messages by source occurrences or matching source text.
 
-    Transifex catalogs can omit occurrences. Match their source messages with
-    whitespace normalized, requiring the warning line to fall within the text.
+    Catalogs can omit occurrences. Match their source messages with
+    whitespace normalized, requiring the warning line to fall within the text
+    or its heading adornments. Locations that could use an included fragment's
+    line number with its parent's filename are ambiguous and are excluded.
     Prefer the longest match to avoid selecting a short message embedded in a
     longer one. Unmapped locations never invalidate an arbitrary nearby entry.
     """
@@ -133,7 +168,18 @@ def catalog_messages(
     catalog = polib.pofile(str(path))
     affected: set[str] = set()
     for source, document in warned_sources.items():
-        affected.update(
-            _source_messages(catalog, source, document, locations[document])
+        fragments = _catalog_sources(source_root, [document]) - {source}
+        fragment_lines = max(
+            (
+                len(fragment.read_text(encoding="utf-8").splitlines())
+                for fragment in fragments
+            ),
+            default=0,
         )
+        # Sphinx can retain a fragment-relative line while replacing the
+        # filename with the parent document during translation. Occurrences
+        # and parent text matches cannot disambiguate that location.
+        lines = frozenset(line for line in locations[document] if line > fragment_lines)
+        if lines:
+            affected.update(_source_messages(catalog, source, document, lines))
     return frozenset(affected)

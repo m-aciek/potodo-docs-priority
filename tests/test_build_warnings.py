@@ -111,3 +111,159 @@ def test_source_occurrences_and_included_fragments(tmp_path):
         [PurePosixPath("index.rst")],
         {PurePosixPath("fragment.rst"): frozenset({1})},
     ) == {"Extracted message"}
+
+
+@pytest.mark.parametrize("with_occurrences", [False, True])
+def test_parent_locations_with_fragment_line_numbers_are_ambiguous(
+    tmp_path, with_occurrences
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    # An included translation can be reported as index.rst:3, even though
+    # its source and line number belong to fragment.rst.
+    (source / "index.rst").write_text(
+        "\n\nInterpreter improvements:\n\n.. include:: fragment.rst\n"
+        "\nDirect parent message\n",
+        encoding="utf-8",
+    )
+    (source / "fragment.rst").write_text("\n\nIncluded message\n", encoding="utf-8")
+    po = polib.POFile()
+    for message, document, line in [
+        ("Interpreter improvements:", "index.rst", "3"),
+        ("Included message", "fragment.rst", "3"),
+        ("Direct parent message", "index.rst", "7"),
+    ]:
+        po.append(
+            polib.POEntry(
+                msgid=message,
+                msgstr="Poprawne tłumaczenie",
+                occurrences=[(document, line)] if with_occurrences else [],
+            )
+        )
+    path = tmp_path / "index.po"
+    po.save(str(path))
+
+    assert (
+        build_warnings.catalog_messages(
+            path,
+            source,
+            [PurePosixPath("index.rst")],
+            {PurePosixPath("index.rst"): frozenset({3})},
+        )
+        == frozenset()
+    )
+    assert build_warnings.catalog_messages(
+        path,
+        source,
+        [PurePosixPath("index.rst")],
+        {
+            PurePosixPath("index.rst"): frozenset({3, 7}),
+            PurePosixPath("fragment.rst"): frozenset({3}),
+        },
+    ) == {"Included message", "Direct parent message"}
+
+
+def test_ambiguity_includes_nested_fragments_and_is_local_to_each_document(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "index.rst").write_text(
+        ".. include:: fragment.rst\n\n\n\nClean parent\n", encoding="utf-8"
+    )
+    (source / "fragment.rst").write_text(".. include:: nested.rst\n")
+    # The cycle must not make source discovery loop forever.
+    (source / "nested.rst").write_text(
+        ".. include:: index.rst\n\n\n\nIncluded message\n", encoding="utf-8"
+    )
+    (source / "other.rst").write_text("\n\n\n\nOther message\n", encoding="utf-8")
+    po = polib.POFile()
+    for message in ("Clean parent", "Included message", "Other message"):
+        po.append(polib.POEntry(msgid=message, msgstr="Tłumaczenie"))
+    path = tmp_path / "compact.po"
+    po.save(str(path))
+    messages = build_warnings.catalog_messages(
+        path,
+        source,
+        [PurePosixPath("index.rst"), PurePosixPath("other.rst")],
+        {
+            PurePosixPath("index.rst"): frozenset({5}),
+            PurePosixPath("other.rst"): frozenset({5}),
+        },
+    )
+    assert messages == {"Other message"}
+
+
+@pytest.mark.parametrize(
+    ("heading", "warning_line"),
+    [
+        ("Allocating objects on the heap\n==============================", 5),
+        ("Allocating objects on the heap\n==============================", 6),
+        (
+            "******************************\nAllocating objects on the heap\n"
+            "******************************",
+            5,
+        ),
+        (
+            "******************************\nAllocating objects on the heap\n"
+            "******************************",
+            7,
+        ),
+    ],
+)
+def test_heading_adornment_locations_without_occurrences(
+    tmp_path, heading, warning_line
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "allocation.rst").write_text(
+        ".. highlight:: c\n\n.. _allocating-objects:\n\n" + heading + "\n",
+        encoding="utf-8",
+    )
+    po = polib.POFile()
+    po.append(
+        polib.POEntry(
+            msgid="Allocating objects on the heap",
+            msgstr="Alokowanie obiektów na stercie",
+        )
+    )
+    # A separate message must not match a substring of the heading.
+    po.append(polib.POEntry(msgid="objects on the heap", msgstr="Inny tekst"))
+    path = tmp_path / "allocation.po"
+    po.save(str(path))
+    messages = build_warnings.catalog_messages(
+        path,
+        source,
+        [PurePosixPath("allocation.rst")],
+        {PurePosixPath("allocation.rst"): frozenset({warning_line})},
+    )
+    assert messages == {"Allocating objects on the heap"}
+    result = lint_warnings.check_catalog(path, build_messages=messages)
+    assert result.incomplete_words == 5
+    assert not result.warnings
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Objects on the heap\n====\n",
+        "Example::\n\n    Objects on the heap\n    ===================\n",
+        "Objects on the heap\nordinary next line\n",
+        "*******************\nObjects on the heap\n===================\n",
+    ],
+)
+def test_non_heading_lines_do_not_map_to_nearby_messages(tmp_path, text):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "guide.rst").write_text(text, encoding="utf-8")
+    po = polib.POFile()
+    po.append(polib.POEntry(msgid="Objects on the heap", msgstr="Obiekty na stercie"))
+    path = tmp_path / "guide.po"
+    po.save(str(path))
+    assert (
+        build_warnings.catalog_messages(
+            path,
+            source,
+            [PurePosixPath("guide.rst")],
+            {PurePosixPath("guide.rst"): frozenset({len(text.splitlines())})},
+        )
+        == frozenset()
+    )

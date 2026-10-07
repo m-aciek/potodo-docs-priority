@@ -118,9 +118,12 @@ diagnostics can differ from the local catalogs.
 CPython reports also download Sphinx build diagnostics from
 `translations.python.org/warnings-<language>.txt`. Their RST source locations
 are matched to PO occurrences or, for catalogs without occurrences, to the
-message text in the local source files and included fragments. Only matched
-translated entries reduce completion; unmatched or location-free diagnostics
-do not invalidate unrelated entries. Entries reported by both checks count
+message text in the local source files and included fragments, including heading
+overlines and underlines. Locations whose line numbers could belong to an
+included fragment rather than the reported parent document are skipped because
+the report does not distinguish their provenance. Only matched translated
+entries reduce completion; unmatched or location-free diagnostics do not
+invalidate unrelated entries. Entries reported by both checks count
 once. A **sphinx-build** link appears next to the other resource links.
 A missing report (HTTP 404) contributes no build diagnostics; other download
 failures stop the build.
