@@ -9,7 +9,7 @@ import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Sequence
 
 from .document_score import (
     catalog_scores,
@@ -290,9 +290,9 @@ def normalized_metric_values(name: str, values: Sequence[Any]) -> list[float]:
     raise ValueError(f"unknown metric {name!r}")
 
 
-def _completion(po_file: PoFileStats) -> float:
+def _completion(po_file: PoFileStats, incomplete_words: int = 0) -> float:
     try:
-        return 100 * po_file.translated_words / po_file.words
+        return 100 * max(0, po_file.translated_words - incomplete_words) / po_file.words
     except ZeroDivisionError:
         return 0
 
@@ -340,16 +340,18 @@ def _collect_candidates(
     language: str,
     docs_version: str,
     show_finished: bool,
+    lint_words: Mapping[str, int],
 ) -> list[_Candidate]:
     candidates = []
     unmatched = []
     for po_directory in po_directories:
         for po_file in po_directory.files:
-            if not show_finished and _completion(po_file) == 100:
-                continue
             resource = PurePosixPath(
                 po_file.path.relative_to(po_directory.path).as_posix()
             )
+            completion = _completion(po_file, lint_words.get(resource.as_posix(), 0))
+            if not show_finished and completion == 100:
+                continue
             try:
                 document_score = document_scores[resource.with_suffix(".pot")]
             except KeyError:
@@ -367,7 +369,7 @@ def _collect_candidates(
                 _Candidate(
                     resource=resource,
                     path=po_file.path,
-                    completion=_completion(po_file),
+                    completion=completion,
                     original_visitors=visitor_counts[0],
                     translated_visitors=visitor_counts[1],
                     document_score=document_score.score,
@@ -391,6 +393,7 @@ def build_priority_rows(
     language: str,
     docs_version: str,
     show_finished: bool,
+    lint_words: Mapping[str, int] | None = None,
 ) -> list[PriorityRow]:
     """Join PO resources to available metrics and return priority order."""
     candidates = _collect_candidates(
@@ -402,6 +405,7 @@ def build_priority_rows(
         language=language,
         docs_version=docs_version,
         show_finished=show_finished,
+        lint_words=lint_words or {},
     )
     if not candidates:
         return []

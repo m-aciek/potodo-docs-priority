@@ -106,6 +106,15 @@ Packaging's compact catalog is split by source-document occurrences.
 Document headings are translated when the PO contains a translation.
 Links to rendered documentation remain available for all projects.
 
+CPython HTML reports run sphinx-lint's enabled checks on every local PO catalog.
+Source words belonging to translated entries with warnings are excluded from
+completed words. Multiple warnings in one entry count only once; fuzzy,
+untranslated, and obsolete entries do not contribute completed words.
+Resources with local warnings link to the published **sphinx-lint** report at
+`translations.python.org/warnings-lint-<language>.txt` next to **docs**.
+Completion is calculated locally without downloading that report; its published
+diagnostics can differ from the local catalogs.
+
 The output directory uses the CPython report as `index.html` and creates
 `packaging.html` and `sphinx.html` for the other selected projects. If CPython
 is excluded with `--projects`, `index.html` instead links the selected project
