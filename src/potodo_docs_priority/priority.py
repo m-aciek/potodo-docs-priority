@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -282,11 +281,9 @@ def normalized_metric_values(name: str, values: Sequence[Any]) -> list[float]:
     if name == "navigation":
         return normalized_ranks(values, higher_is_better=False)
     if name in {"original_popularity", "translated_popularity"}:
-        logged = [math.log1p(max(0, int(value))) for value in values]
-        if len(logged) < 2 or min(logged) == max(logged):
-            return [0.5] * len(logged)
-        low, high = min(logged), max(logged)
-        return [(value - low) / (high - low) for value in logged]
+        return normalized_ranks(
+            [max(0, int(value)) for value in values], higher_is_better=True
+        )
     raise ValueError(f"unknown metric {name!r}")
 
 
