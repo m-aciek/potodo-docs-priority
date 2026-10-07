@@ -115,6 +115,16 @@ Resources with local warnings link to the published **sphinx-lint** report at
 Completion is calculated locally without downloading that report; its published
 diagnostics can differ from the local catalogs.
 
+CPython reports also download Sphinx build diagnostics from
+`translations.python.org/warnings-<language>.txt`. Their RST source locations
+are matched to PO occurrences or, for catalogs without occurrences, to the
+message text in the local source files and included fragments. Only matched
+translated entries reduce completion; unmatched or location-free diagnostics
+do not invalidate unrelated entries. Entries reported by both checks count
+once. A **sphinx-build** link appears next to the other resource links.
+A missing report (HTTP 404) contributes no build diagnostics; other download
+failures stop the build.
+
 The output directory uses the CPython report as `index.html` and creates
 `packaging.html` and `sphinx.html` for the other selected projects. If CPython
 is excluded with `--projects`, `index.html` instead links the selected project
