@@ -251,20 +251,20 @@ def _standard_items(
     build_resources = set()
     source_root = resolve_source_root(project, source)
     if project_name == "cpython":
-        build_locations = load_warnings(language)
+        build_diagnostics = load_warnings(language)
         for directory in directories:
             for po_file in directory.files:
                 resource = po_file.path.relative_to(directory.path).as_posix()
                 catalog_score = scores.get(PurePosixPath(resource).with_suffix(".pot"))
                 documents = catalog_score.documents if catalog_score else ()
                 build_messages = catalog_messages(
-                    po_file.path, source_root, documents, build_locations
+                    po_file.path, source_root, documents, build_diagnostics
                 )
                 lint_results[resource] = check_catalog(
                     po_file.path, build_messages=build_messages
                 )
                 if build_messages or any(
-                    document in build_locations for document in documents
+                    document in build_diagnostics for document in documents
                 ):
                     build_resources.add(resource)
     rows = build_priority_rows(

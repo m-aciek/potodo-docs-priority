@@ -428,15 +428,21 @@ def test_cpython_build_warnings_reopen_resources_and_do_not_double_count(
         build_warnings,
         "urlopen",
         lambda *args, **kwargs: BytesIO(
-            b"build-only.rst:4: WARNING: inconsistent references\n"
+            b"build-only.rst:4: WARNING: inconsistent term references in translated "
+            b"message. original: [':meth:`assertAlmostEqual`'], "
+            b"translated: [':meth:`assertNotNotAlmostEqual`'] "
+            b"[i18n.inconsistent_references]\n"
             b"both.rst:4:<translated>:1: WARNING: invalid role\n"
             b"both.rst:4: ERROR: another finding\n"
             b"unmapped.rst:999: WARNING: unmatched source location\n"
+            b"stale.rst:4: WARNING: inconsistent term references in translated "
+            b"message. original: [':func:`round`'], translated: [] "
+            b"[i18n.inconsistent_references]\n"
         ),
     )
     source = tmp_path / "Doc"
     source.mkdir()
-    names = ("build-only", "both", "clean", "unmapped")
+    names = ("build-only", "both", "clean", "unmapped", "stale")
     (source / "contents.rst").write_text(
         "Docs\n====\n\n.. toctree::\n\n" + "".join(f"   {name}\n" for name in names)
     )
@@ -444,15 +450,17 @@ def test_cpython_build_warnings_reopen_resources_and_do_not_double_count(
     translations.mkdir()
     for name in names:
         (source / f"{name}.rst").write_text(
-            "Clean one\n=========\n\nBroken three source words\n"
+            "Clean one\n=========\n\nBroken :meth:`assertAlmostEqual` source words\n"
         )
         po = polib.POFile()
         po.append(polib.POEntry(msgid="Clean one", msgstr="Poprawny tekst"))
         po.append(
             polib.POEntry(
-                msgid="Broken three source words",
+                msgid="Broken :meth:`assertAlmostEqual` source words",
                 msgstr=(
-                    ":func:`print`tekst " if name == "both" else "Poprawne tłumaczenie"
+                    ":func:`print`tekst "
+                    if name == "both"
+                    else "Tekst :meth:`assertNotNotAlmostEqual`"
                 ),
             )
         )
