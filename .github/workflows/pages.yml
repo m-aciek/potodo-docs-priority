@@ -16,6 +16,7 @@ jobs:
   build:
     permissions:
       contents: read
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out priority utility
@@ -111,11 +112,20 @@ jobs:
             stats/packaging.python.org_*
           sparse-checkout-cone-mode: false
 
+      - name: Download the Polish spellcheck report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCS_BRANCH: ${{ steps.cpython-release.outputs.branch }}
+        run: |
+          python -m potodo_docs_priority.fetch_spellcheck \
+            --branch "$DOCS_BRANCH" --output sources/spellcheck/pl.json
+
       - name: Build the site
         run: |
           potodo-docs-priority-pages \
             --devguide sources/devguide \
             --sources sources \
+            --spellcheck-reports sources/spellcheck \
             --output _site
 
       - name: Upload Pages artifact

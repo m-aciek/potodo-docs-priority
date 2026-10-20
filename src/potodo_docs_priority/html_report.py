@@ -37,6 +37,7 @@ from .priority import (
     resolve_source_root,
     resolve_translation_paths,
 )
+from .spellcheck import SpellcheckReport
 
 if TYPE_CHECKING:
     from polib import POEntry
@@ -58,8 +59,8 @@ class HtmlMetrics:
 
 
 @dataclass(frozen=True)
-class HtmlItem:
-    """One linked resource in the HTML report."""
+class HtmlItem:  # pylint: disable=too-many-instance-attributes
+    """One report row, keeping its metrics and diagnostic links together."""
 
     resource: str
     title: str
@@ -68,6 +69,8 @@ class HtmlItem:
     documentation_url: str | None = None
     lint_url: str | None = None
     build_url: str | None = None
+    spellcheck_url: str | None = None
+    spellcheck_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,7 @@ class HtmlSection:
     title: str
     items: tuple[HtmlItem, ...]
     notice: str | None = None
+    spellcheck_notice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +243,7 @@ def _standard_items(
     docs_version: str,
     limit: int | None,
     transifex: bool,
+    spellcheck: SpellcheckReport | None = None,
 ) -> tuple[HtmlItem, ...]:
     project = PROJECTS[project_name]
     paths = resolve_translation_paths(project, [translations], language)
@@ -248,6 +253,7 @@ def _standard_items(
         project, stats, language, snapshots, docs_version
     )
     lint_results = {}
+    spelling_results = {}
     build_resources = set()
     source_root = resolve_source_root(project, source)
     if project_name == "cpython":
@@ -260,8 +266,18 @@ def _standard_items(
                 build_messages = catalog_messages(
                     po_file.path, source_root, documents, build_diagnostics
                 )
+                if spellcheck is not None:
+                    spelling_results[resource] = spellcheck.catalog(
+                        po_file.path, resource
+                    )
                 lint_results[resource] = check_catalog(
-                    po_file.path, build_messages=build_messages
+                    po_file.path,
+                    build_messages=build_messages,
+                    spelling_entries=(
+                        spelling_results[resource].entries
+                        if spellcheck is not None
+                        else frozenset()
+                    ),
                 )
                 if build_messages or any(
                     document in build_diagnostics for document in documents
@@ -331,6 +347,13 @@ def _standard_items(
                 build_url=(
                     build_warnings_url(language)
                     if row.resource in build_resources
+                    else None
+                ),
+                spellcheck_url=spellcheck.url if spellcheck is not None else None,
+                spellcheck_status=(
+                    spelling_results[row.resource].status
+                    + (", findings" if spelling_results[row.resource].entries else "")
+                    if row.resource in spelling_results
                     else None
                 ),
             )
@@ -545,10 +568,16 @@ def build_sections(
     docs_version: str,
     limit: int | None = None,
     cpython_transifex: bool | None = None,
+    spellcheck_report: Path | None = None,
 ) -> tuple[HtmlSection, ...]:
     """Rank requested projects and return renderable report sections."""
     sections = []
     if "cpython" in projects:
+        spelling = (
+            SpellcheckReport.load(spellcheck_report, language)
+            if spellcheck_report is not None
+            else None
+        )
         sections.append(
             HtmlSection(
                 project="cpython",
@@ -567,7 +596,9 @@ def build_sections(
                         if cpython_transifex is None
                         else cpython_transifex
                     ),
+                    spelling,
                 ),
+                spellcheck_notice=spelling.notice if spelling is not None else None,
             )
         )
     if "packaging" in projects:
@@ -703,6 +734,10 @@ def render_html(
         )
     if navigation:
         lines.append(f"  <nav>{navigation}</nav>")
+    if section.spellcheck_notice:
+        lines.append(
+            f'<p class="spellcheck-notice">{html.escape(section.spellcheck_notice)}</p>'
+        )
     if section.notice:
         lines.extend(
             (f"<p>{html.escape(section.notice)}</p>", "</body>", "</html>", "")
@@ -756,11 +791,20 @@ def render_html(
             if item.url
             else resource
         )
+        spelling_link = ""
+        if item.spellcheck_status is not None:
+            label = html.escape(f"spellcheck: {item.spellcheck_status}")
+            spelling_link = (
+                f' <a class="spellcheck-link" '
+                f'href="{html.escape(item.spellcheck_url, quote=True)}">{label}</a>'
+                if item.spellcheck_url
+                else f' <span class="spellcheck-status">{label}</span>'
+            )
         lines.append(
             f'    <tr data-resource="{resource}" data-ranks="{ranks}" '
             f'data-core="{core}" data-priority="{item.metrics.priority}">'
             f'<th scope="row">{resource_label}'
-            f'{docs_link}{lint_link}{build_link}<span class="resource-title">'
+            f'{docs_link}{lint_link}{build_link}{spelling_link}<span class="resource-title">'
             f"{html.escape(item.title)}</span>{badge}</th>"
             f'<td class="priority">{item.metrics.priority:.2f}</td>'
         )

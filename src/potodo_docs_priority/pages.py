@@ -71,6 +71,7 @@ def language_sections(
     *,
     snapshots: int = 30,
     docs_version: str = "3",
+    spellcheck_reports: Path | None = None,
 ) -> tuple[HtmlSection, ...]:
     """Build only projects with PO catalogs for this language."""
     catalogs: dict[str, Path] = {}
@@ -99,6 +100,13 @@ def language_sections(
                 snapshots=snapshots,
                 docs_version=docs_version,
                 cpython_transifex=language.transifex,
+                spellcheck_report=(
+                    spellcheck_reports / f"{language.code}.json"
+                    if project == "cpython"
+                    and language.code == "pl"
+                    and spellcheck_reports is not None
+                    else None
+                ),
             )
         except OSError as error:
             # Polib uses OSError for invalid PO syntax. Isolate that upstream
@@ -165,6 +173,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sources", type=Path, default=Path("sources"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--spellcheck-reports", type=Path, help="directory containing pl.json"
+    )
+    parser.add_argument(
         "--languages", nargs="+", help="optional subset of devguide codes"
     )
     parser.add_argument("--title", default="Documentation translation priorities")
@@ -195,7 +206,12 @@ def main() -> None:
             if language.repository
             else None
         )
-        sections = language_sections(language, args.sources, translations)
+        sections = language_sections(
+            language,
+            args.sources,
+            translations,
+            spellcheck_reports=args.spellcheck_reports,
+        )
         title = f"{language.name} ({language.code}) – {args.title}"
         for path in write_pages(
             args.output / language.code, sections, title, language_index="../index.html"
