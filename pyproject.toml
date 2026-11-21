@@ -8,9 +8,13 @@ version = "0.1.0"
 description = "Prioritize translation resources for Sphinx documentation projects."
 authors = [{ name = "Maciej Olko", email = "maciej.olko@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
-dependencies = ["potodo>=0.35", "sphinx-lint>=1.0", "docutils>=0.19"]
+dependencies = [
+    "potodo>=0.35",
+    "sphinx-lint @ git+https://github.com/m-aciek/sphinx-lint.git@eb72ff94b619fe112f046fd68415810bdfce773a",
+    "docutils>=0.19",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
