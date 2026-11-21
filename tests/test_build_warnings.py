@@ -312,11 +312,98 @@ def _write_source_catalog(tmp_path, text, entries):
 
 
 REFERENCE_WARNING = (
-    "inconsistent term references in translated message. "
+    "inconsistent cross-references in translated message. "
     "original: [':meth:`assertAlmostEqual`', ':meth:`assertNotAlmostEqual`'], "
     "translated: [':meth:`assertAlmostEqual`', ':meth:`assertNotNotAlmostEqual`'] "
     "[i18n.inconsistent_references]"
 )
+
+
+@pytest.mark.parametrize(
+    ("language", "report", "original", "translated"),
+    [
+        (
+            "fr",
+            "c-api/bool.rst:22: WARNING: inconsistent cross-references in translated "
+            "message. original: [':c:data:`PyBool_Type`'], "
+            "translated: [':c:data:`PyBook_Type`'] [i18n.inconsistent_references]",
+            "Use :c:data:`PyBool_Type`.",
+            "Utilisez :c:data:`PyBook_Type`.",
+        ),
+        (
+            "fr",
+            "bugs.rst:40: WARNING: inconsistent named references in translated "
+            "message. original: ['`Documentation bugs`_'], "
+            "translated: ['`Bogues de documentation`_'] [i18n.inconsistent_references]",
+            "See `Documentation bugs`_.",
+            "Voir `Bogues de documentation`_.",
+        ),
+        (
+            "ja",
+            "library/collections.rst:981: WARNING: inconsistent cross-references "
+            "in translated message. original: [':class:`dict`', "
+            "':class:`OrderedDict`', ':class:`OrderedDict`'], "
+            "translated: [':class:`collections.OrderedDict`', ':class:`dict`', "
+            "':class:`OrderedDict`'] [i18n.inconsistent_references]",
+            "Use :class:`dict`, :class:`OrderedDict` and :class:`OrderedDict`.",
+            ":class:`collections.OrderedDict`、:class:`dict`、:class:`OrderedDict`。",
+        ),
+    ],
+)
+def test_current_published_reference_warnings_reduce_completion(
+    tmp_path, monkeypatch, language, report, original, translated
+):
+    # Diagnostics copied from https://translations.python.org/warnings-{fr,ja}.txt.
+    location = report.split(": WARNING: ", 1)[0]
+    filename, line = location.rsplit(":", 1)
+    document = PurePosixPath(filename)
+    source = tmp_path / "source"
+    rst = source / document
+    rst.parent.mkdir(parents=True)
+    rst.write_text("\n" * (int(line) - 1) + original + "\n", encoding="utf-8")
+    catalog = polib.POFile()
+    catalog.append(polib.POEntry(msgid=original, msgstr=translated))
+    path = tmp_path / "guide.po"
+    catalog.save(str(path))
+    monkeypatch.setattr(
+        build_warnings, "urlopen", lambda *args, **kwargs: BytesIO(report.encode())
+    )
+    messages = build_warnings.catalog_messages(
+        path, source, [document], build_warnings.load_warnings(language)
+    )
+    assert messages == {original}
+    assert lint_warnings.check_catalog(
+        path, build_messages=messages
+    ).incomplete_words == len(original.split())
+
+
+@pytest.mark.parametrize(
+    ("kind", "original", "translated"),
+    [
+        ("term references", ":meth:`method`", ":meth:`methode`"),
+        ("glossary references", ":term:`object`", ":term:`objet`"),
+        ("references", "`source`_", "`traduction`_"),
+        ("footnote references", "[1]_", "[2]_"),
+        ("citation references", "[source]_", "[traduction]_"),
+    ],
+)
+def test_glossary_and_legacy_reference_diagnostics(
+    tmp_path, kind, original, translated
+):
+    source, path = _write_source_catalog(
+        tmp_path, original + "\n", [(original, translated)]
+    )
+    warning = (
+        f"inconsistent {kind} in translated message. "
+        f"original: {[original]!r}, translated: {[translated]!r} "
+        "[i18n.inconsistent_references]"
+    )
+    assert build_warnings.catalog_messages(
+        path,
+        source,
+        [PurePosixPath("guide.rst")],
+        {PurePosixPath("guide.rst"): (build_warnings.BuildWarning(1, warning),)},
+    ) == {original}
 
 
 @pytest.mark.parametrize("with_occurrences", [False, True])

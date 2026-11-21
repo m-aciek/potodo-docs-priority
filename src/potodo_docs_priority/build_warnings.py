@@ -26,7 +26,8 @@ LOCATION_RE = re.compile(
     re.MULTILINE,
 )
 REFERENCES_RE = re.compile(
-    r"^inconsistent (?P<kind>term |footnote |citation )?references in translated "
+    r"^inconsistent (?P<kind>term |glossary |cross-|named |footnote |citation )?"
+    r"references in translated "
     r"message\. original: (?P<original>.+), translated: (?P<translated>.+) "
     r"\[i18n\.inconsistent_references\]$"
 )
@@ -243,8 +244,11 @@ def _reference_identity(
         or not original
     ):
         return None
+    kind = {"glossary ": "term ", "cross-": "term ", "named ": None}.get(
+        match.group("kind"), match.group("kind")
+    )
     return (
-        match.group("kind"),
+        kind,
         tuple(sorted(" ".join(ref.split()) for ref in original)),
         tuple(sorted(" ".join(ref.split()) for ref in translated)),
     )
