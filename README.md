@@ -106,6 +106,32 @@ Packaging's compact catalog is split by source-document occurrences.
 Document headings are translated when the PO contains a translation.
 Links to rendered documentation remain available for all projects.
 
+CPython HTML reports run sphinx-lint's enabled checks on every local PO catalog.
+Source words belonging to translated entries with warnings are excluded from
+completed words. Multiple warnings in one entry count only once; fuzzy,
+untranslated, and obsolete entries do not contribute completed words.
+Resources with local warnings link to the published **sphinx-lint** report at
+`translations.python.org/warnings-lint-<language>.txt` next to **docs**.
+Completion is calculated locally without downloading that report; its published
+diagnostics can differ from the local catalogs.
+
+CPython reports also download Sphinx build diagnostics from
+`translations.python.org/warnings-<language>.txt`. Their RST source locations
+are matched to PO occurrences or, for catalogs without occurrences, to the
+message text in the local source files and included fragments of any filename,
+including heading overlines and underlines. Locations whose line numbers could
+belong to an included fragment rather than the reported parent document are
+skipped because the report does not distinguish their provenance. Because
+published reports also lack source revision metadata, location matches must be
+verified against the local catalog before reducing completion: reference
+diagnostics must uniquely match the source and translated references, while docutils findings
+must reproduce in the translation and be absent from the source message.
+Unverified, unmatched, or location-free diagnostics do not invalidate unrelated
+entries. Entries reported by both checks count once. A **sphinx-build** link
+appears next to the other resource links.
+A missing report (HTTP 404) contributes no build diagnostics; other download
+failures stop the build.
+
 The output directory uses the CPython report as `index.html` and creates
 `packaging.html` and `sphinx.html` for the other selected projects. If CPython
 is excluded with `--projects`, `index.html` instead links the selected project
@@ -129,7 +155,9 @@ The included GitHub Pages workflow rebuilds reports for every language in the
 devguide's translation table every day at 03:17 UTC, on pushes to `main`, and
 on manual runs. Like `dashboard`, it reads each language's
 CPython repository from the devguide and selects the newest available supported
-release branch, falling back to `master` and `main`. It adds Sphinx and Packaging
+release branch, falling back to `master` and `main`. CPython's source documentation
+also comes from the newest supported release branch, using the same release-cycle
+data as the dashboard. It adds Sphinx and Packaging
 reports wherever those projects have catalogs for the language, accounting for
 gettext locale names such as `pt_BR` and `zh_Hans`.
 

@@ -16,9 +16,12 @@ from urllib.parse import quote, urlencode
 import polib
 from potodo.po_file import PoDirectories, PoDirectory
 
+from .build_warnings import catalog_messages, load_warnings
+from .build_warnings import warnings_url as build_warnings_url
 from .document_score import score_sphinx_documents
 from .html_tuning import TUNING_SCRIPT
 from .languages import CPYTHON_TRANSIFEX_LANGUAGES
+from .lint_warnings import check_catalog, warnings_url
 from .priority import (
     CORE_RESOURCE_BOOST,
     PROJECTS,
@@ -63,6 +66,8 @@ class HtmlItem:
     url: str | None
     metrics: HtmlMetrics
     documentation_url: str | None = None
+    lint_url: str | None = None
+    build_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +247,26 @@ def _standard_items(
     original, translated = _load_visitors(
         project, stats, language, snapshots, docs_version
     )
+    lint_results = {}
+    build_resources = set()
+    source_root = resolve_source_root(project, source)
+    if project_name == "cpython":
+        build_diagnostics = load_warnings(language)
+        for directory in directories:
+            for po_file in directory.files:
+                resource = po_file.path.relative_to(directory.path).as_posix()
+                catalog_score = scores.get(PurePosixPath(resource).with_suffix(".pot"))
+                documents = catalog_score.documents if catalog_score else ()
+                build_messages = catalog_messages(
+                    po_file.path, source_root, documents, build_diagnostics
+                )
+                lint_results[resource] = check_catalog(
+                    po_file.path, build_messages=build_messages
+                )
+                if build_messages or any(
+                    document in build_diagnostics for document in documents
+                ):
+                    build_resources.add(resource)
     rows = build_priority_rows(
         directories,
         scores,
@@ -251,8 +276,11 @@ def _standard_items(
         language=language,
         docs_version=docs_version,
         show_finished=False,
+        lint_words={
+            resource: result.incomplete_words
+            for resource, result in lint_results.items()
+        },
     )
-    source_root = resolve_source_root(project, source)
     tx_resources = transifex_resources(translations) if transifex else {}
     items = []
     for row in rows:
@@ -292,6 +320,17 @@ def _standard_items(
                         docs_version,
                     )
                     if catalog.documents
+                    else None
+                ),
+                lint_url=(
+                    warnings_url(language)
+                    if row.resource in lint_results
+                    and lint_results[row.resource].warnings
+                    else None
+                ),
+                build_url=(
+                    build_warnings_url(language)
+                    if row.resource in build_resources
                     else None
                 ),
             )
@@ -700,6 +739,18 @@ def render_html(
             if item.documentation_url
             else ""
         )
+        lint_link = (
+            ' <a class="lint-link" '
+            f'href="{html.escape(item.lint_url, quote=True)}">sphinx-lint</a>'
+            if item.lint_url
+            else ""
+        )
+        build_link = (
+            ' <a class="build-link" '
+            f'href="{html.escape(item.build_url, quote=True)}">sphinx-build</a>'
+            if item.build_url
+            else ""
+        )
         resource_label = (
             f'<a href="{html.escape(item.url, quote=True)}">{resource}</a>'
             if item.url
@@ -709,7 +760,8 @@ def render_html(
             f'    <tr data-resource="{resource}" data-ranks="{ranks}" '
             f'data-core="{core}" data-priority="{item.metrics.priority}">'
             f'<th scope="row">{resource_label}'
-            f'{docs_link}<span class="resource-title">{html.escape(item.title)}</span>{badge}</th>'
+            f'{docs_link}{lint_link}{build_link}<span class="resource-title">'
+            f"{html.escape(item.title)}</span>{badge}</th>"
             f'<td class="priority">{item.metrics.priority:.2f}</td>'
         )
         for name, _, attribute in columns:

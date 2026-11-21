@@ -95,6 +95,8 @@ def test_render_html_escapes_titles_and_links():
                     translated_visitors=12,
                     document_score=(1, 2),
                 ),
+                lint_url="https://example.test/lint?a=1&b=2",
+                build_url="https://example.test/build?a=1&b=2",
             ),
         ),
     )
@@ -105,6 +107,9 @@ def test_render_html_escapes_titles_and_links():
     assert "<nav>" not in output
     assert "Use &lt;tools&gt; &amp; &quot;build&quot;" in output
     assert "?a=1&amp;b=2" in output
+    assert 'href="https://example.test/lint?a=1&amp;b=2">sphinx-lint</a>' in output
+    assert 'href="https://example.test/build?a=1&amp;b=2">sphinx-build</a>' in output
+    assert "<details" not in output
     assert '<table aria-label="Translation priorities">' in output
     assert '<th class="metric-column" scope="col">Completion</th>' in output
     assert '<td class="priority">90.00</td>' in output
@@ -330,6 +335,167 @@ def test_cpython_links_only_transifex_languages(tmp_path, language, linked):
     if linked:
         assert section.items[0].url.endswith(f"#{language}/glossary_")
     assert ("app.transifex.com" in render_html(section, "Priorities")) is linked
+
+
+@pytest.mark.parametrize("language", ["pl", "fr"])
+def test_cpython_local_lint_warnings_reopen_completed_resources_without_network(
+    tmp_path, monkeypatch, language
+):
+    import urllib.request
+
+    from potodo_docs_priority.html_report import check_catalog
+
+    def offline(*args, **kwargs):
+        raise AssertionError("Local reports must not fetch published lint results")
+
+    monkeypatch.setattr(urllib.request, "urlopen", offline)
+    checked = []
+
+    def record_check(path, **kwargs):
+        checked.append(path.name)
+        return check_catalog(path, **kwargs)
+
+    monkeypatch.setattr("potodo_docs_priority.html_report.check_catalog", record_check)
+    source = tmp_path / "Doc"
+    source.mkdir()
+    (source / "contents.rst").write_text(
+        "Docs\n====\n\n.. toctree::\n\n   broken\n   clean\n   fixed\n   partial\n"
+    )
+    translations = tmp_path / "translations"
+    translations.mkdir()
+    for name in ("broken", "clean", "fixed", "partial"):
+        (source / f"{name}.rst").write_text("Clean one\n=========\n")
+        po = polib.POFile()
+        po.append(
+            polib.POEntry(
+                msgid="Clean one", msgstr="" if name == "partial" else "Poprawny tekst"
+            )
+        )
+        po.append(
+            polib.POEntry(
+                msgid="Broken three source words",
+                msgstr=(
+                    "Pierwsza linia\n:func:`print`tekst "
+                    if name in {"broken", "partial"}
+                    else "Poprawne tłumaczenie"
+                ),
+            )
+        )
+        po.save(str(translations / f"{name}.po"))
+    _write_snapshot(tmp_path, "docs.python.org", "3", [])
+    section = build_sections(
+        projects=["cpython"],
+        language=language,
+        plausible_stats=tmp_path,
+        cpython_source=source,
+        cpython_translations=translations,
+        packaging_source=tmp_path,
+        packaging_translations=tmp_path,
+        sphinx_source=tmp_path,
+        sphinx_translations=tmp_path,
+        snapshots=30,
+        docs_version="3",
+    )[0]
+    items = {item.resource: item for item in section.items}
+    assert sorted(checked) == ["broken.po", "clean.po", "fixed.po", "partial.po"]
+    assert set(items) == {"broken", "partial"}
+    assert items["broken"].metrics.completion == pytest.approx(100 / 3)
+    assert items["partial"].metrics.completion == 0
+    assert items["broken"].metrics.ranks["completion"] == pytest.approx(1 / 3)
+    assert all(
+        item.lint_url == f"https://translations.python.org/warnings-lint-{language}.txt"
+        for item in items.values()
+    )
+    output = render_html(section, "Priorities")
+    assert (
+        f'href="https://docs.python.org/{language}/3/broken.html">docs</a>'
+        ' <a class="lint-link" '
+        f'href="https://translations.python.org/warnings-lint-{language}.txt">sphinx-lint</a>'
+    ) in output
+    assert output.count('class="lint-link"') == 2
+    assert "<details" not in output
+    assert (items["broken"].url is not None) == (language == "pl")
+
+
+def test_cpython_build_warnings_reopen_resources_and_do_not_double_count(
+    tmp_path, monkeypatch
+):
+    from io import BytesIO
+
+    from potodo_docs_priority import build_warnings
+
+    monkeypatch.setattr(
+        build_warnings,
+        "urlopen",
+        lambda *args, **kwargs: BytesIO(
+            b"build-only.rst:4: WARNING: inconsistent term references in translated "
+            b"message. original: [':meth:`assertAlmostEqual`'], "
+            b"translated: [':meth:`assertNotNotAlmostEqual`'] "
+            b"[i18n.inconsistent_references]\n"
+            b"both.rst:4:<translated>:1: WARNING: invalid role\n"
+            b"both.rst:4: ERROR: another finding\n"
+            b"unmapped.rst:999: WARNING: unmatched source location\n"
+            b"stale.rst:4: WARNING: inconsistent term references in translated "
+            b"message. original: [':func:`round`'], translated: [] "
+            b"[i18n.inconsistent_references]\n"
+        ),
+    )
+    source = tmp_path / "Doc"
+    source.mkdir()
+    names = ("build-only", "both", "clean", "unmapped", "stale")
+    (source / "contents.rst").write_text(
+        "Docs\n====\n\n.. toctree::\n\n" + "".join(f"   {name}\n" for name in names)
+    )
+    translations = tmp_path / "translations"
+    translations.mkdir()
+    for name in names:
+        (source / f"{name}.rst").write_text(
+            "Clean one\n=========\n\nBroken :meth:`assertAlmostEqual` source words\n"
+        )
+        po = polib.POFile()
+        po.append(polib.POEntry(msgid="Clean one", msgstr="Poprawny tekst"))
+        po.append(
+            polib.POEntry(
+                msgid="Broken :meth:`assertAlmostEqual` source words",
+                msgstr=(
+                    ":func:`print`tekst "
+                    if name == "both"
+                    else "Tekst :meth:`assertNotNotAlmostEqual`"
+                ),
+            )
+        )
+        po.save(str(translations / f"{name}.po"))
+    _write_snapshot(tmp_path, "docs.python.org", "3", [])
+    section = build_sections(
+        projects=["cpython"],
+        language="pl",
+        plausible_stats=tmp_path,
+        cpython_source=source,
+        cpython_translations=translations,
+        packaging_source=tmp_path,
+        packaging_translations=tmp_path,
+        sphinx_source=tmp_path,
+        sphinx_translations=tmp_path,
+        snapshots=30,
+        docs_version="3",
+    )[0]
+    items = {item.resource: item for item in section.items}
+    assert set(items) == {"build-only", "both"}
+    assert all(
+        item.metrics.completion == pytest.approx(100 / 3) for item in items.values()
+    )
+    assert items["build-only"].lint_url is None
+    assert items["both"].lint_url is not None
+    assert all(
+        item.build_url == "https://translations.python.org/warnings-pl.txt"
+        for item in items.values()
+    )
+    output = render_html(section, "Priorities")
+    assert output.count('class="build-link"') == 2
+    assert (
+        'href="https://translations.python.org/warnings-pl.txt">sphinx-build</a>'
+        in output
+    )
 
 
 @pytest.mark.parametrize("language", ["pl", "de"])

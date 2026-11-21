@@ -23,11 +23,37 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the HTML report utility
+        run: python -m pip install '.[pages]'
+
+      - name: Select the newest CPython release branch
+        id: cpython-release
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from potodo_docs_priority.pages import release_branches
+
+          branch = release_branches()[0]
+          if branch in {"master", "main"}:
+              raise RuntimeError("No supported CPython release branch found")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"branch={branch}\n")
+          PY
+
       - name: Check out CPython documentation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: python/cpython
+          ref: ${{ steps.cpython-release.outputs.branch }}
           path: sources/cpython
           sparse-checkout: |
             Doc
@@ -84,16 +110,6 @@ jobs:
             stats/docs.python.org_*
             stats/packaging.python.org_*
           sparse-checkout-cone-mode: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install the HTML report utility
-        run: python -m pip install '.[pages]'
 
       - name: Build the site
         run: |
