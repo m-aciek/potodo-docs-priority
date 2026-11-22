@@ -16,7 +16,6 @@ jobs:
   build:
     permissions:
       contents: read
-      actions: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out priority utility
@@ -114,7 +113,6 @@ jobs:
 
       - name: Download the Polish spellcheck report
         env:
-          GH_TOKEN: ${{ github.token }}
           DOCS_BRANCH: ${{ steps.cpython-release.outputs.branch }}
         run: |
           python -m potodo_docs_priority.fetch_spellcheck \

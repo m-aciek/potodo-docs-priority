@@ -91,7 +91,7 @@ class SpellcheckReport:
         if record is None:
             return CatalogSpelling()
         current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        status = "checked" if current_hash == record["source_sha256"] else "stale"
+        status = "checked" if current_hash == record.get("checkout_sha256") else "stale"
         local_entries = {
             entry_key(entry): translation_digest(entry)
             for entry in polib.pofile(str(path)).translated_entries()

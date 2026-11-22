@@ -30,7 +30,8 @@ def report_data(path, entries):
         "status": "complete",
         "catalogs": {
             path.name: {
-                "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "source_sha256": "temporary-scan-checksum",
+                "checkout_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 "findings": [
                     {
                         "msgctxt": entry.msgctxt,
@@ -208,3 +209,14 @@ def test_html_builder_uses_external_spelling_findings_without_running_checker(tm
     assert '<table aria-label="Translation priorities">' in render_html(
         section, "Priorities"
     )
+
+
+def test_missing_checkout_checksum_never_claims_current_coverage(tmp_path):
+    path = tmp_path / "guide.po"
+    path.write_text('msgid "Source words"\nmsgstr "blont"\n')
+    entry = polib.pofile(str(path))[0]
+    data = report_data(path, [entry])
+    del data["catalogs"][path.name]["checkout_sha256"]
+    result = SpellcheckReport(data).catalog(path, path.name)
+    assert result.status == "stale"
+    assert result.entries == {entry_key(entry)}
