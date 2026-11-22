@@ -158,10 +158,62 @@ def test_normalized_ranks_follow_metric_direction_and_keep_ties():
 def test_metric_normalization_matches_metric_semantics():
     assert normalized_metric_values("completion", [0, 50, 100]) == [0, 0.5, 1]
     assert normalized_metric_values("navigation", [(0,), (1,), (2,)]) == [1, 0.5, 0]
-    visitors = normalized_metric_values("original_popularity", [0, 10, 1000])
-    assert visitors[0] == 0
-    assert 0 < visitors[1] < visitors[2] == 1
+    assert normalized_metric_values("original_popularity", [0, 10, 1000]) == [
+        0,
+        0.5,
+        1,
+    ]
     assert normalized_metric_values("translated_popularity", [0, 0]) == [0.5, 0.5]
+
+
+@pytest.mark.parametrize("metric", ["original_popularity", "translated_popularity"])
+@pytest.mark.parametrize(
+    ("visitors", "expected"),
+    [
+        ([0, 0, 0, 10, 1000], [0.25, 0.25, 0.25, 0.75, 1]),
+        ([1000, 0, 0, 0, 0], [1, 0.375, 0.375, 0.375, 0.375]),
+        ([10, 1000, 10], [0.25, 1, 0.25]),
+        ([0, 0], [0.5, 0.5]),
+        ([10], [0.5]),
+        ([], []),
+    ],
+)
+def test_popularity_percentiles_average_ties(metric, visitors, expected):
+    assert normalized_metric_values(metric, visitors) == expected
+
+
+def test_priority_gives_missing_pages_average_rank_and_preserves_raw_visitors(tmp_path):
+    resources = ["missing-a", "missing-b", "missing-c", "missing-d", "popular"]
+    directory = SimpleNamespace(
+        path=tmp_path,
+        files=[
+            SimpleNamespace(path=tmp_path / f"{name}.po", words=10, translated_words=5)
+            for name in resources
+        ],
+    )
+    scores = {
+        PurePosixPath(f"{name}.pot"): DocumentScore(
+            (PurePosixPath(f"{name}.rst"),), (1,)
+        )
+        for name in resources
+    }
+    rows = build_priority_rows(
+        [directory],
+        scores,
+        {"/3/popular.html": 1000},
+        None,
+        project=PROJECTS["cpython"],
+        language="pl",
+        docs_version="3",
+        show_finished=False,
+    )
+    assert rows[0].resource == "popular.po"
+    assert rows[0].original_visitors == 1000
+    assert rows[0].priority == pytest.approx(100 * (0.5 + 0.5 + 1) / 3)
+    for row in rows[1:]:
+        assert row.original_visitors == 0
+        assert row.translated_visitors is None
+        assert row.priority == pytest.approx(100 * (0.5 + 0.5 + 0.375) / 3)
 
 
 def test_positive_int():

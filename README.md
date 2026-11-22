@@ -40,7 +40,7 @@ example `pt_BR` uses the `/pt-br/latest/` analytics prefix.
 
 ## Priority model
 
-Every available metric receives equal weight after percentile ranking:
+Every available metric receives equal weight after normalization:
 
 - visitors to the original article;
 - visitors to the translated article;
@@ -49,7 +49,10 @@ Every available metric receives equal weight after percentile ranking:
 
 The metric scales match their meanings: completion uses its linear 0–100%
 scale, navigation distance uses percentile ranking with shorter distances better,
-and visitor counts use `log1p` scaling followed by linear min–max normalization.
+and visitor counts temporarily use percentile ranking with higher counts better
+and average ranks for ties. Resources absent from the Plausible snapshots share
+the average rank of the lowest group rather than all receiving a zero score.
+This reduces the penalty from top-100 exports, but cannot recover omitted visits.
 The displayed raw values remain unchanged; only the score and background bar use
 these normalized values.
 
