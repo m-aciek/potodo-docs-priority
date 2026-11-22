@@ -175,7 +175,7 @@ def test_multilingual_builder_writes_languages_and_navigation(tmp_path, monkeypa
     monkeypatch.setattr(
         pages,
         "language_sections",
-        lambda language, *args: (
+        lambda language, *args, **kwargs: (
             (HtmlSection("cpython", "CPython", ()), HtmlSection("sphinx", "Sphinx", ()))
             if language.repository
             else ()

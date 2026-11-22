@@ -135,6 +135,37 @@ appears next to the other resource links.
 A missing report (HTTP 404) contributes no build diagnostics; other download
 failures stop the build.
 
+Polish CPython reports can also consume the public JSON report published by
+[the translation dashboard](https://translations.python.org/spellcheck-pl.json).
+The checker runs in `python/python-docs-pl`; the dashboard downloads its Actions
+artifact and publishes the report unchanged. This project needs no GitHub token:
+
+```sh
+python -m potodo_docs_priority.fetch_spellcheck \
+  --branch 3.15 --output spellcheck/pl.json
+potodo-docs-priority-html --language pl --output priorities/pl \
+  --spellcheck-report spellcheck/pl.json
+```
+
+Only a complete report for the requested repository and release branch is used.
+A missing report (HTTP 404 or JSON `null`) leaves spelling readiness unknown;
+other download failures stop the build.
+
+Schema-v1 findings identify a PO path, `msgctxt`, `msgid`, `msgid_plural`, and a
+SHA-256 fingerprint of the checked translation. Only matches to current active
+translated entries reduce completion. Findings from spelling, sphinx-lint, and
+Sphinx are combined before counting affected source words, so an entry is counted
+once. `checkout_sha256` identifies the original PO before its temporary gettext
+update; `source_sha256` retains pospell's checksum of the scanned file. Changed
+catalogs are marked stale even if some findings still match. Missing or unscanned
+catalogs have unknown spelling readiness. Reports show the check date,
+per-resource freshness, and a run link.
+
+`potodo-docs-priority-pages --spellcheck-reports DIR` reads `DIR/pl.json` for the
+Polish CPython report. The Pages workflow downloads the public JSON during its
+normal build. The producer's format is documented in
+`python-docs-pl/SPELLCHECK_REPORT.md`.
+
 The output directory uses the CPython report as `index.html` and creates
 `packaging.html` and `sphinx.html` for the other selected projects. If CPython
 is excluded with `--projects`, `index.html` instead links the selected project

@@ -9,6 +9,8 @@ from urllib.parse import quote
 import polib
 from sphinxlint import check_file, checkers
 
+from .spellcheck import EntryKey, entry_key
+
 
 def warnings_url(language: str) -> str:
     """Return the published lint report URL without fetching it."""
@@ -25,7 +27,10 @@ class LintResult:
 
 
 def check_catalog(
-    path: Path, *, build_messages: frozenset[str] = frozenset()
+    path: Path,
+    *,
+    build_messages: frozenset[str] = frozenset(),
+    spelling_entries: frozenset[EntryKey] = frozenset(),
 ) -> LintResult:
     """Lint a local catalog and count affected translated source words once.
 
@@ -49,15 +54,17 @@ def check_catalog(
                 f"{failure.msg} ({failure.checker_name})",
             )
         )
-    if not lines and not build_messages:
+    if not lines and not build_messages and not spelling_entries:
         return LintResult()
     words = 0
     next_line = 1
     for entry in catalog.translated_entries():
         start = max(next_line, entry.linenum)
         next_line = start + len(entry.msgstr.splitlines())
-        if entry.msgid in build_messages or any(
-            start <= line < next_line for line in lines
+        if (
+            entry_key(entry) in spelling_entries
+            or entry.msgid in build_messages
+            or any(start <= line < next_line for line in lines)
         ):
             words += len(entry.msgid.split())
     return LintResult(words, tuple(message for _, message in sorted(warnings)))

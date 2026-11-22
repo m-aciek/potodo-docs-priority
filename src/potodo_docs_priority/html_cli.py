@@ -37,6 +37,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stats-snapshots", type=positive_int, default=30)
     parser.add_argument("--docs-version", default="3")
     parser.add_argument(
+        "--spellcheck-report", type=Path, help="CPython spelling report JSON"
+    )
+    parser.add_argument(
         "--plausible-stats", type=Path, default=Path("../plausible-stats")
     )
     parser.add_argument("--cpython-source", type=Path, default=Path("../cpython"))
@@ -106,6 +109,7 @@ def main() -> None:
         snapshots=args.stats_snapshots,
         docs_version=args.docs_version,
         limit=args.limit,
+        spellcheck_report=args.spellcheck_report,
     )
     for path in write_pages(args.output, sections, args.title):
         print(path)
